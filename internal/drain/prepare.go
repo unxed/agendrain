@@ -51,6 +51,37 @@ func Prepare(b *Bundle, o Options) error {
 			seen := map[string]bool{}
 			for ei := range s.Events {
 				e := &s.Events[ei]
+				for bi := range e.Blocks {
+					bl := &e.Blocks[bi]
+					if bl.storedAsset == "" {
+						continue
+					}
+					data, ok := b.Assets[bl.storedAsset]
+					if !ok {
+						return fmt.Errorf("missing recorded file snapshot")
+					}
+					bl.Description = "Recorded attachment snapshot"
+					bl.MIME = http.DetectContentType(data)
+					if o.Files == "summary" {
+						if o.DescribeCommand != "" {
+							bl.Text, err = describe(o, "file", bl.Path, bl.MIME, data)
+							if err != nil {
+								return err
+							}
+						} else {
+							bl.Text = fileSummary(data)
+						}
+					} else if utf8.Valid(data) && !bytes.ContainsRune(data, 0) && !strings.HasPrefix(bl.MIME, "image/") {
+						bl.Type = "file_content"
+						bl.Text = string(data)
+					} else {
+						bl.Asset = bl.storedAsset
+						if strings.HasPrefix(bl.MIME, "image/") {
+							bl.Type = "image"
+						}
+					}
+					bl.storedAsset = ""
+				}
 				var refs []string
 				for _, bl := range e.Blocks {
 					if bl.Path != "" {

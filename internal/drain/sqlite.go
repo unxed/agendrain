@@ -139,6 +139,7 @@ func (b *Bundle) opencode(input string) error {
 			info = object(m["session"])
 		}
 		s := sessionInfo(info, "opencode")
+		sessionMetadata(&s, info)
 		if s.ID == "" {
 			return fmt.Errorf("OpenCode export has no info.id")
 		}
@@ -158,6 +159,10 @@ func (b *Bundle) opencode(input string) error {
 			e.Blocks = b.openCodeParts(content)
 			if len(e.Blocks) == 0 {
 				e.Blocks = b.blocks(mi["text"])
+			}
+			e.Blocks = append(metadata(mi, "id", "role", "type", "time", "model", "modelID", "text", "content", "parts", "files"), e.Blocks...)
+			for _, file := range arr(mi["files"]) {
+				e.Blocks = append(e.Blocks, b.blocks(file)...)
 			}
 			s.Events = append(s.Events, e)
 		}
@@ -183,7 +188,7 @@ func (b *Bundle) openCodeParts(v any) []Block {
 			state := object(m["state"])
 			stateMeta := obj{}
 			for k, v := range state {
-				if k != "content" && k != "output" {
+				if k != "content" && k != "output" && k != "attachments" {
 					stateMeta[k] = v
 				}
 			}
@@ -193,7 +198,11 @@ func (b *Bundle) openCodeParts(v any) []Block {
 			if content == nil {
 				content = state["output"]
 			}
-			for _, bl := range b.blocks(content) {
+			results := b.blocks(content)
+			for _, a := range arr(state["attachments"]) {
+				results = append(results, b.blocks(a)...)
+			}
+			for _, bl := range results {
 				if bl.Type == "text" {
 					bl.Type = "tool_result"
 				}
@@ -225,6 +234,7 @@ func (b *Bundle) openCodeDB(input string) error {
 					continue
 				}
 				seen[s.ID] = true
+				sessionMetadata(&s, row)
 				s.model(row["model"])
 				if table == "session_v2" && tableExists(q, "session_message") {
 					msgs, err := records(q, "SELECT * FROM session_message WHERE session_id=? ORDER BY seq, id", s.ID)
@@ -269,6 +279,7 @@ func (b *Bundle) openCodeDB(input string) error {
 						if len(e.Blocks) == 0 {
 							e.Blocks = []Block{{Type: "context", Text: jsonText(m)}}
 						}
+						e.Blocks = append(metadata(m, "id", "role", "type", "time", "model", "modelID", "text", "content", "parts", "files"), e.Blocks...)
 						s.Events = append(s.Events, e)
 					}
 				} else if tableExists(q, "message") {
@@ -301,6 +312,7 @@ func (b *Bundle) openCodeDB(input string) error {
 						if len(e.Blocks) == 0 {
 							e.Blocks = []Block{{Type: "context", Text: jsonText(m)}}
 						}
+						e.Blocks = append(metadata(m, "id", "role", "type", "time", "model", "modelID", "text", "content", "parts", "files"), e.Blocks...)
 						s.Events = append(s.Events, e)
 					}
 				}
@@ -328,6 +340,7 @@ func (b *Bundle) openCodeTree(root string) error {
 			return err
 		}
 		s := sessionInfo(object(v), "opencode")
+		sessionMetadata(&s, object(v))
 		if s.ID == "" {
 			continue
 		}
@@ -372,6 +385,7 @@ func (b *Bundle) openCodeTree(root string) error {
 				}
 				e.Blocks = append(e.Blocks, b.openCodeParts([]any{v})...)
 			}
+			e.Blocks = append(metadata(m, "id", "role", "type", "time", "model", "modelID", "text", "content", "parts", "files"), e.Blocks...)
 			s.Events = append(s.Events, e)
 		}
 		b.Sessions = append(b.Sessions, s)

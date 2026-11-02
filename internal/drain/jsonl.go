@@ -70,6 +70,7 @@ func (b *Bundle) codex(input string) error {
 				switch e.Kind {
 				case "message":
 					e.Blocks = b.blocks(payload["content"])
+					e.Blocks = append(metadata(payload, "type", "id", "role", "content"), e.Blocks...)
 				case "function_call", "custom_tool_call":
 					e.Kind = "tool_call"
 					e.Blocks = []Block{textBlock(jsonText(payload))}
@@ -231,6 +232,8 @@ func (b *Bundle) claude(input string) error {
 					e.Role = "tool"
 					e.Kind = "tool_result"
 				}
+				e.Blocks = append(metadata(msg, "role", "content", "model"), e.Blocks...)
+				e.Blocks = append(e.Blocks, metadata(m, "type", "uuid", "timestamp", "sessionId", "cwd", "message", "content")...)
 			} else {
 				e.Role = "system"
 				e.Kind = typ
@@ -273,7 +276,7 @@ func (b *Bundle) claude(input string) error {
 	return nil
 }
 
-func (b *Bundle) vtvibe(input string) error {
+func (b *Bundle) vibeTree(input string) error {
 	i, err := os.Stat(input)
 	if err != nil {
 		return err

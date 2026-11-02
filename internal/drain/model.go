@@ -43,6 +43,7 @@ type Block struct {
 	Origin      string `json:"origin,omitempty"`
 	CallID      string `json:"call_id,omitempty"`
 	Name        string `json:"name,omitempty"`
+	storedAsset string
 }
 
 type Options struct {

@@ -48,6 +48,28 @@ func jsonText(v any) string {
 	return string(p)
 }
 func textBlock(s string) Block { return Block{Type: "text", Text: s} }
+func metadata(m obj, excluded ...string) []Block {
+	skip := map[string]bool{}
+	for _, k := range excluded {
+		skip[k] = true
+	}
+	extra := obj{}
+	for k, v := range m {
+		if !skip[k] {
+			extra[k] = v
+		}
+	}
+	if len(extra) == 0 {
+		return nil
+	}
+	return []Block{{Type: "context", Text: jsonText(extra)}}
+}
+func sessionMetadata(s *Session, m obj) {
+	blocks := metadata(m, "id", "parentID", "parent_id", "title", "directory", "path", "model", "time_created", "time_updated")
+	if len(blocks) > 0 {
+		s.Events = append(s.Events, Event{Role: "system", Kind: "session_context", Blocks: blocks})
+	}
+}
 func stamp(v any) string {
 	if s := str(v); s != "" {
 		return s
@@ -562,6 +584,8 @@ func Discover(source string) []string {
 		return []string{filepath.Join(config, "Cursor", "User", "globalStorage", "state.vscdb"), filepath.Join(config, "Cursor", "User", "workspaceStorage")}
 	case "claude-desktop":
 		return []string{filepath.Join(config, "Claude", "local-agent-mode-sessions"), filepath.Join(claude, "projects")}
+	case "vtvibe":
+		return []string{filepath.Join(config, "f4", "ai", "dialog.json"), filepath.Join(config, "f4", "ai", "dialogs")}
 	default:
 		return nil
 	}
