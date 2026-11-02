@@ -34,7 +34,7 @@ jobs:
             if [ "${target%/*}" = windows ]; then suffix=".exe"; fi
             GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_SHA}" -o dist/agendrain-${target%/*}-${target#*/}${suffix} ./cmd/agendrain
           done
-          sha256sum dist/agendrain-* > dist/SHA256SUMS
+          (cd dist && sha256sum agendrain-* > SHA256SUMS)
       - uses: actions/upload-artifact@v4
         with:
           name: agendrain-${{ github.sha }}

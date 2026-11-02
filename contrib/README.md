@@ -45,9 +45,8 @@ Checks completed while preparing the patch: `gofmt`, `git diff --check` and
 The patch includes five regression tests covering historical instructions and
 removed references, failed-request persistence/reset, read-only VFS copying,
 exports larger than the context-file limit, and truthful legacy warnings.
-Runtime tests must run in hosted CI with f4's pinned Go toolchain (1.26.6)
-and dependencies; no local f4 build was run. For a small hosted test module,
-copy `internal/vtvibe` and supply its `vfs` contract package, retaining the
-existing `github.com/anthropics/anthropic-sdk-go v1.80.0` dependency. Tests
-were authored before the implementation, but no runtime red/green result
-is claimed until that CI runs.
+Runtime verification runs in the repository's `f4 transcript patch` GitHub
+workflow with the pinned f4 commit and Go 1.26.6. The hosted run
+[41547214882](https://github.com/unxed/agendrain/actions/runs/41547214882)
+passed `go test -race ./internal/vtvibe`; the workflow repeats this validation
+for subsequent commits. No local f4 build was run.

@@ -8,7 +8,8 @@ agendrain keeps recorded messages, available instructions and context, tool call
 
 ## Install
 
-Requires Go 1.22 or newer:
+
+To install from source, use Go 1.22 or newer:
 
 ```sh
 go install github.com/unxed/agendrain/cmd/agendrain@latest
@@ -28,7 +29,7 @@ agendrain list --source codex
 agendrain export --source codex --session SESSION_ID --output handoff.zip
 ```
 
-`sources` prints candidate stores and whether they exist. Without `--input`, a named source uses its first existing candidate; it does not merge all stores. Use an explicit input to select an archive, another profile, or a remote machine's copied store:
+`sources` prints candidate stores and whether they exist. Without `--input`, a named source combines its discovered stores, deduplicates identical sessions, warns about unreadable candidates, and rejects conflicting copies of a session. Use an explicit input to select one store, another profile, or a remote machine's copied store:
 
 ```sh
 agendrain list --source codex --input /path/to/.codex/archived_sessions --json
@@ -39,6 +40,8 @@ agendrain export --source vtvibe --input /path/to/f4/ai/dialog.json --output han
 ```
 
 `--session` includes descendants found in the supplied store. Give it the enclosing store when subagent logs live separately. A store with multiple root sessions requires `--session` or an explicit `--all`. Missing referenced children produce warnings. `--strict` rejects exports with any completeness warnings; warnings are also included in the handoff.
+
+Codex listing reads session metadata without loading all conversation bodies; text output says `metadata only`, and JSON omits unknown event counts. Selecting a Codex session loads the chosen family after indexing session headers.
 
 The default ZIP contains readable `conversation.md`, a versioned `manifest.json`, and deduplicated recorded attachments. Extract it and ask the next agent to read `conversation.md` and continue. The export is context for a new conversation, not a native session restore. Existing destination files are never overwritten. See [format details](docs/FORMAT.md).
 
@@ -59,7 +62,7 @@ agendrain export --source codex --session SESSION_ID --format md-zip --output ha
 agendrain export --source codex --session SESSION_ID --format md --output handoff.md --image-archive pictures.zip
 ```
 
-`md-zip` contains `conversation.md` and `images/00000001.*`. With `--image-archive`, extract the picture ZIP beside the Markdown to resolve its `images/` links. These presentation formats omit the canonical manifest; retain a normal ZIP for future chaining.
+`md-zip` contains `conversation.md` and `images/00000001.*`. With `--image-archive`, the picture ZIP contains the same `<document-stem>_images/` paths as the ordinary Markdown output: for `handoff.md`, extract it beside the document to resolve `handoff_images/` links. These presentation formats omit the canonical manifest; retain a normal ZIP for future chaining.
 
 ## Referenced files
 
@@ -83,7 +86,7 @@ agendrain export --source vtvibe --input /path/to/f4/ai/dialogs --session SESSIO
 
 Discovery checks the platform configuration directory's `f4/ai/dialog.json` and `f4/ai/dialogs`. Native JSON imports include saved turns, unsent drafts, and selected workflow state; the stored `github_token` field is always excluded. Saved attachment bodies remain opt-in. Existing copied `ai://` trees with `chat/` and `session.md` are also supported.
 
-Unpatched stores lack historical prompts and transient bot tool histories. An optional [f4 patch](contrib/README.md) records request-time instructions and exposes `ai://agendrain.json`, copyable with F5 and readable using `--source vtvibe`. It cannot recover context from before it was installed; separate bot/worker tool histories remain unavailable unless their reports were inserted into the session.
+Unpatched stores lack historical prompts and transient bot tool histories. An optional [f4 patch](contrib/README.md) saves request-time instructions and outcomes; the native importer interleaves these records with saved turns. The patch also exposes `ai://agendrain.json`, copyable with F5 and readable using `--source vtvibe`. It cannot recover context from before it was installed; separate bot/worker tool histories remain unavailable unless their reports were inserted into the session.
 
 ## Smaller exports without a full paraphrase
 

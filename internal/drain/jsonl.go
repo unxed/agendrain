@@ -40,6 +40,12 @@ func (b *Bundle) codex(input string) error {
 	if err != nil {
 		return err
 	}
+	return b.codexFiles(ps, input, single)
+}
+
+// codexFiles parses only the supplied rollout paths. Discovery and metadata-only
+// selection can therefore share the importer without scanning other bodies.
+func (b *Bundle) codexFiles(ps []string, input string, single bool) error {
 	target := ""
 	for _, p := range ps {
 		s := Session{ID: strings.TrimSuffix(strings.TrimSuffix(filepath.Base(p), ".zst"), ".jsonl"), Source: "codex"}

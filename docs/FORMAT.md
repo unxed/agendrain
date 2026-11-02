@@ -71,7 +71,7 @@ The available context is limited by what the source persisted. Encrypted reasoni
 
 ## Markdown presentation formats
 
-`--format md` writes one Markdown document plus a sibling `<document-stem>_images` directory when there are images. `--format md --image-archive pictures.zip` writes a separate ZIP with an `images/` directory; extract it beside the Markdown for working links. `--format md-zip` combines `conversation.md` and `images/` in one ZIP.
+`--format md` writes one Markdown document plus a sibling `<document-stem>_images` directory when there are images. `--format md --image-archive pictures.zip` writes a separate ZIP containing that same `<document-stem>_images/` directory; extract it beside the Markdown for working links. For example, `handoff.md` links to `handoff_images/00000001.png` whether images are written directly or supplied in the sidecar ZIP. `--format md-zip` combines `conversation.md` and `images/` in one ZIP.
 
 Images receive names such as `00000001.jpg` and `00000002.png` in encounter order across the rendered sessions and blocks. Every image occurrence gets a number, even when the same image occurs more than once. Formats are preserved rather than transcoded. Non-image binary attachments are omitted with a size/checksum marker unless `--base64` is enabled, which embeds them as fenced base64 in the document. Text already stored in a conversation or explicitly included using `--files full` stays in the document.
 

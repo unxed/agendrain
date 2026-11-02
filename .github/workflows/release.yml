@@ -47,6 +47,7 @@ jobs:
             chmod +x "$stage/agendrain$suffix"
             cp LICENSE README.md "$stage/"
             cp -r docs "$stage/"
+            cp -r contrib "$stage/"
             if [[ "$target" == windows-* ]]; then
               archive="$PWD/packages/agendrain-$RELEASE_TAG-$target.zip"
               (cd "$stage" && zip -qr "$archive" .)
@@ -54,7 +55,7 @@ jobs:
               tar -czf "packages/agendrain-$RELEASE_TAG-$target.tar.gz" -C "$stage" .
             fi
           done
-          sha256sum packages/agendrain-* > packages/SHA256SUMS
+          (cd packages && sha256sum agendrain-* > SHA256SUMS)
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

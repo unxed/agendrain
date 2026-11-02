@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"strings"
 
 	"github.com/unxed/agendrain/internal/drain"
@@ -33,8 +35,84 @@ Clients: codex, claude (Claude Code), claude-desktop, opencode, cursor,
 Export defaults to a compressed ZIP with conversation.md, manifest.json and
 recorded attachments. Referenced local files are never read by default.
 Use 'agendrain export --help' for all options. No network requests are made
-unless you explicitly provide an external --rewrite-command.
+unless you explicitly provide an external --rewrite-command or --describe-command.
 `
+
+// loadInput combines native stores before selection so that archived sessions
+// and subagents remain reachable even when they live in different stores.
+func loadInput(source, input, id string) (*drain.Bundle, error) {
+	if input != "" {
+		return drain.LoadSelected(source, input, id)
+	}
+	if source == "codex" && id != "" {
+		return drain.LoadSelected(source, input, id)
+	}
+	candidates := drain.Discover(source)
+	if len(candidates) == 0 {
+		return drain.Load(source, input)
+	}
+	b := &drain.Bundle{Version: drain.Version, Assets: map[string][]byte{}}
+	seen := map[string]drain.Session{}
+	var failures []string
+	appendUnique := func(dest *[]string, values ...string) {
+		for _, value := range values {
+			found := false
+			for _, old := range *dest {
+				if value == old {
+					found = true
+					break
+				}
+			}
+			if !found {
+				*dest = append(*dest, value)
+			}
+		}
+	}
+	for _, path := range candidates {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			continue
+		} else if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", path, err))
+			continue
+		}
+		part, err := drain.Load(source, path)
+		if err != nil {
+			// Empty application directories can exist before the first chat.
+			if !strings.HasPrefix(err.Error(), "no sessions found in ") {
+				failures = append(failures, fmt.Sprintf("%s: %v", path, err))
+			}
+			continue
+		}
+		for _, s := range part.Sessions {
+			if old, exists := seen[s.ID]; exists {
+				if !reflect.DeepEqual(old, s) {
+					return nil, fmt.Errorf("conflicting session %q in discovered stores; select an explicit --input", s.ID)
+				}
+				continue
+			}
+			seen[s.ID] = s
+			b.Sessions = append(b.Sessions, s)
+		}
+		for id, data := range part.Assets {
+			if old, exists := b.Assets[id]; exists && !bytes.Equal(old, data) {
+				return nil, fmt.Errorf("conflicting asset %s in discovered stores; select an explicit --input", id)
+			}
+			b.Assets[id] = data
+		}
+		appendUnique(&b.Warnings, part.Warnings...)
+		appendUnique(&b.Changes, part.Changes...)
+	}
+	if len(b.Sessions) == 0 {
+		if len(failures) > 0 {
+			return nil, fmt.Errorf("cannot load discovered %s stores: %s", source, strings.Join(failures, "; "))
+		}
+		return nil, fmt.Errorf("no sessions found in discovered %s stores; specify --input", source)
+	}
+	for _, failure := range failures {
+		appendUnique(&b.Warnings, "Skipped discovered store: "+failure)
+	}
+	return b, nil
+}
 
 func run(args []string, out, stderr io.Writer) int {
 	fail := func(err error) int { fmt.Fprintln(stderr, "agendrain:", err); return 1 }
@@ -109,15 +187,13 @@ func run(args []string, out, stderr io.Writer) int {
 	if command == "export" && *output == "" {
 		return fail(fmt.Errorf("--output is required"))
 	}
-	if *input == "" {
-		for _, p := range drain.Discover(*source) {
-			if _, err := os.Stat(p); err == nil {
-				*input = p
-				break
-			}
-		}
+	var b *drain.Bundle
+	var err error
+	if command == "list" && *source == "codex" && *id == "" {
+		b, err = drain.CatalogCodex(*input)
+	} else {
+		b, err = loadInput(*source, *input, *id)
 	}
-	b, err := drain.Load(*source, *input)
 	if err != nil {
 		return fail(err)
 	}
@@ -131,18 +207,27 @@ func run(args []string, out, stderr io.Writer) int {
 				Parent string `json:"parent_id,omitempty"`
 				Source string `json:"source"`
 				Title  string `json:"title,omitempty"`
-				Events int    `json:"events"`
+				Events *int   `json:"events,omitempty"`
 			}
 			rows := make([]row, 0, len(b.Sessions))
 			for _, s := range b.Sessions {
-				rows = append(rows, row{s.ID, s.ParentID, s.Source, s.Title, len(s.Events)})
+				var events *int
+				if s.Events != nil {
+					count := len(s.Events)
+					events = &count
+				}
+				rows = append(rows, row{s.ID, s.ParentID, s.Source, s.Title, events})
 			}
 			if err = json.NewEncoder(out).Encode(rows); err != nil {
 				return fail(err)
 			}
 		} else {
 			for _, s := range b.Sessions {
-				fmt.Fprintf(out, "%s\t%s\t%d events\t%s\tparent=%s\n", s.ID, s.Source, len(s.Events), s.Title, s.ParentID)
+				count := "metadata only"
+				if s.Events != nil {
+					count = fmt.Sprintf("%d events", len(s.Events))
+				}
+				fmt.Fprintf(out, "%s\t%s\t%s\t%s\tparent=%s\n", s.ID, s.Source, count, s.Title, s.ParentID)
 			}
 		}
 		for _, w := range b.Warnings {
