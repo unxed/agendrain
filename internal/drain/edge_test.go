@@ -200,3 +200,35 @@ func TestClaudeMixedToolResultPreservesRequirementWhenPruned(t *testing.T) {
 		t.Fatal(s)
 	}
 }
+
+func TestOpenCodePreservesRecordedInstructionsAndPermissions(t *testing.T) {
+	p := put(t, t.TempDir(), "export.json", `{"info":{"id":"p","directory":"/repo","permission":{"edit":"deny"}},"messages":[{"info":{"id":"u","role":"user","system":"Exact safety instruction","agent":"plan"},"parts":[{"type":"text","text":"Read only"}]}]}`)
+	b := load(t, "opencode", p)
+	for _, want := range []string{"Exact safety instruction", "permission", "deny", "plan", "Read only"} {
+		if !strings.Contains(joined(b), want) {
+			t.Error(want, joined(b))
+		}
+	}
+}
+
+func TestCodexToolDefinitionsAreContext(t *testing.T) {
+	p := put(t, t.TempDir(), "p.jsonl", `{"type":"session_meta","payload":{"id":"p"}}
+{"type":"response_item","payload":{"type":"message","role":"system","tools":[{"name":"special_tool","description":"Only use after CI"}],"content":[]}}
+`)
+	b := load(t, "codex", p)
+	if !strings.Contains(joined(b), "Only use after CI") {
+		t.Fatal(joined(b))
+	}
+}
+
+func TestVTVibeNativeSavedDialog(t *testing.T) {
+	p := put(t, t.TempDir(), "dialog.json", `{"version":1,"title":"Native dialog","github_token":"NEVER_EXPORT_THIS_TOKEN","context":{"/ctx/code.go":"cGFja2FnZSBwcml2YXRl"},"turns":[{"Role":"user","Text":"Keep requirement","Time":"2026-11-03T00:00:00Z"},{"Role":"assistant","Text":"Native decision","Time":"2026-11-03T00:00:01Z"}],"draft":"Unsent draft"}`)
+	b := load(t, "vtvibe", p)
+	if err := Prepare(b, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	s := joined(b)
+	if !strings.Contains(s, "Native decision") || !strings.Contains(s, "Unsent draft") || strings.Contains(s, "NEVER_EXPORT_THIS_TOKEN") || strings.Contains(s, "package private") {
+		t.Fatal(s)
+	}
+}
