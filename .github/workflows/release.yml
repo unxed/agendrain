@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download binaries from successful exact-commit CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for workflow in ci.yml f4-patch.yml; do
+            result=$(gh run list --workflow "$workflow" --commit "$GITHUB_SHA" --json databaseId,status,conclusion --jq '[.[] | select(.status == "completed" and .conclusion == "success")][0].databaseId')
+            if [ -z "$result" ] || [ "$result" = null ]; then
+              echo "No successful $workflow run for $GITHUB_SHA. Tag only a fully validated main commit."
+              exit 1
+            fi
+            if [ "$workflow" = ci.yml ]; then
+              gh run download "$result" --name "agendrain-$GITHUB_SHA" --dir binaries
+            fi
+          done
+          cd binaries
+          sha256sum --check SHA256SUMS
+      - name: Package CI binaries
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p packages
+          for target in linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64; do
+            stage=$(mktemp -d)
+            suffix=""
+            if [[ "$target" == windows-* ]]; then suffix=".exe"; fi
+            cp "binaries/agendrain-$target$suffix" "$stage/agendrain$suffix"
+            chmod +x "$stage/agendrain$suffix"
+            cp LICENSE README.md "$stage/"
+            cp -r docs "$stage/"
+            if [[ "$target" == windows-* ]]; then
+              archive="$PWD/packages/agendrain-$RELEASE_TAG-$target.zip"
+              (cd "$stage" && zip -qr "$archive" .)
+            else
+              tar -czf "packages/agendrain-$RELEASE_TAG-$target.tar.gz" -C "$stage" .
+            fi
+          done
+          sha256sum packages/agendrain-* > packages/SHA256SUMS
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" packages/* --verify-tag --title "agendrain $RELEASE_TAG" --generate-notes
