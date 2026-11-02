@@ -1,63 +1,57 @@
 // Package drain imports recorded agent context into a versioned portable format.
 package drain
 
-import "errors"
-
 const Version = 1
 
 type Bundle struct {
-	Version int `json:"version"`
-	Sessions []Session `json:"sessions"`
-	Warnings []string `json:"warnings,omitempty"`
-	Changes []string `json:"changes,omitempty"`
-	Assets map[string][]byte `json:"-"`
+	Version    int               `json:"version"`
+	Sessions   []Session         `json:"sessions"`
+	Warnings   []string          `json:"warnings,omitempty"`
+	Changes    []string          `json:"changes,omitempty"`
+	Assets     map[string][]byte `json:"-"`
+	AssetFiles map[string]string `json:"asset_files,omitempty"`
 }
 
 type Session struct {
-	ID string `json:"id"`
-	ParentID string `json:"parent_id,omitempty"`
-	Source string `json:"source"`
-	Title string `json:"title,omitempty"`
-	CWD string `json:"cwd,omitempty"`
-	Models []string `json:"models,omitempty"`
-	Events []Event `json:"events"`
+	ID       string   `json:"id"`
+	ParentID string   `json:"parent_id,omitempty"`
+	Source   string   `json:"source"`
+	Title    string   `json:"title,omitempty"`
+	CWD      string   `json:"cwd,omitempty"`
+	Models   []string `json:"models,omitempty"`
+	Events   []Event  `json:"events"`
 }
 
 type Event struct {
-	ID string `json:"id,omitempty"`
-	Time string `json:"time,omitempty"`
-	Role string `json:"role"`
-	Kind string `json:"kind,omitempty"`
-	CallID string `json:"call_id,omitempty"`
-	Name string `json:"name,omitempty"`
+	ID     string  `json:"id,omitempty"`
+	Time   string  `json:"time,omitempty"`
+	Role   string  `json:"role"`
+	Kind   string  `json:"kind,omitempty"`
+	CallID string  `json:"call_id,omitempty"`
+	Name   string  `json:"name,omitempty"`
 	Blocks []Block `json:"blocks"`
 }
 
 type Block struct {
-	Type string `json:"type"`
-	Text string `json:"text,omitempty"`
-	Path string `json:"path,omitempty"`
-	MIME string `json:"mime,omitempty"`
-	Asset string `json:"asset,omitempty"`
+	Type        string `json:"type"`
+	Text        string `json:"text,omitempty"`
+	Path        string `json:"path,omitempty"`
+	MIME        string `json:"mime,omitempty"`
+	Asset       string `json:"asset,omitempty"`
 	Description string `json:"description,omitempty"`
 }
 
 type Options struct {
-	Format string
-	StripModels bool
-	ModelNames []string
-	Files string
-	Roots []string
-	Compact bool
-	Images string
-	Descriptions map[string]string
-	Base64 bool
+	Format           string
+	StripModels      bool
+	ModelNames       []string
+	Files            string
+	Roots            []string
+	Compact          bool
+	Images           string
+	Descriptions     map[string]string
+	Base64           bool
 	PruneToolsBefore string
-	RewriteCommand string
-	MaxFileBytes int64
+	RewriteCommand   string
+	MaxFileBytes     int64
 }
-
-func Load(source, input string) (*Bundle, error) { return nil, errors.New("not implemented") }
-func (b *Bundle) Select(id string) error { return errors.New("not implemented") }
-func Prepare(b *Bundle, o Options) error { return errors.New("not implemented") }
-func Write(b *Bundle, output string, o Options) error { return errors.New("not implemented") }
