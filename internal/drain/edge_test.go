@@ -188,3 +188,15 @@ func TestSQLiteURIWithSpecialPathAndReadOnly(t *testing.T) {
 		t.Fatal("store writable")
 	}
 }
+
+func TestClaudeMixedToolResultPreservesRequirementWhenPruned(t *testing.T) {
+	p := put(t, t.TempDir(), "p.jsonl", `{"type":"user","sessionId":"p","timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"c","content":"old log"},{"type":"text","text":"Exact new requirement: retain filenames"}]}}`+"\n")
+	b := load(t, "claude", p)
+	if err := Prepare(b, Options{PruneToolsBefore: "2026-10-01T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	s := joined(b)
+	if !strings.Contains(s, "Exact new requirement: retain filenames") || strings.Contains(s, "old log") {
+		t.Fatal(s)
+	}
+}
