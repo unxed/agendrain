@@ -90,17 +90,24 @@ func Prepare(b *Bundle, o Options) error {
 		for ei := range s.Events {
 			e := &s.Events[ei]
 			label := fmt.Sprintf("%s event %d", s.ID, ei+1)
-			if !before.IsZero() && (e.Role == "tool" || e.Kind == "tool_result") {
-				when, err := time.Parse(time.RFC3339Nano, e.Time)
-				if err == nil && when.Before(before) {
-					sum := sha256.Sum256([]byte(jsonText(e.Blocks)))
-					e.Blocks = []Block{{Type: "omitted", Text: fmt.Sprintf("Tool result explicitly pruned; sha256:%x", sum)}}
+			pruneOld := false
+			if !before.IsZero() {
+				when, e2 := time.Parse(time.RFC3339Nano, e.Time)
+				pruneOld = e2 == nil && when.Before(before)
+			}
+
+			for bi := range e.Blocks {
+				bl := &e.Blocks[bi]
+				if pruneOld && (e.Role == "tool" || e.Kind == "tool_result" || bl.Type == "tool_result" || bl.Origin == "tool_result") {
+					sum := sha256.Sum256([]byte(jsonText(*bl)))
+					bl.Type = "omitted"
+					bl.Text = fmt.Sprintf("Tool result explicitly pruned; sha256:%x", sum)
+					bl.Asset = ""
+					bl.Description = ""
 					b.Changes = append(b.Changes, label+": old tool result pruned")
 					continue
 				}
-			}
-			for bi := range e.Blocks {
-				bl := &e.Blocks[bi]
+
 				if bl.Type == "image" && o.Images != "" && o.Images != "keep" {
 					desc := first(o.Descriptions[bl.Asset], o.Descriptions[bl.Path], bl.Description)
 					if o.Images == "describe" && desc == "" && o.DescribeCommand != "" {

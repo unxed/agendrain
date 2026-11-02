@@ -40,6 +40,9 @@ type Block struct {
 	MIME        string `json:"mime,omitempty"`
 	Asset       string `json:"asset,omitempty"`
 	Description string `json:"description,omitempty"`
+	Origin      string `json:"origin,omitempty"`
+	CallID      string `json:"call_id,omitempty"`
+	Name        string `json:"name,omitempty"`
 }
 
 type Options struct {

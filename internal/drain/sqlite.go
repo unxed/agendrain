@@ -197,6 +197,9 @@ func (b *Bundle) openCodeParts(v any) []Block {
 				if bl.Type == "text" {
 					bl.Type = "tool_result"
 				}
+				bl.Origin = "tool_result"
+				bl.CallID = first(m["callID"], m["id"])
+				bl.Name = first(m["tool"], m["name"])
 				out = append(out, bl)
 			}
 		} else {

@@ -212,19 +212,24 @@ func (b *Bundle) claude(input string) error {
 					e.Blocks = []Block{{Type: "context", Text: jsonText(m)}}
 				}
 				// A single message may contain several ordered tool calls/results.
+				allResults := len(arr(msg["content"])) > 0
 				for _, item := range arr(msg["content"]) {
 					x := object(item)
 					bt := str(x["type"])
+					if bt != "tool_result" {
+						allResults = false
+					}
 					if bt == "tool_use" || bt == "tool_result" {
 						e.CallID = first(x["id"], x["tool_use_id"])
 						e.Name = str(x["name"])
-						if bt == "tool_result" {
-							e.Role = "tool"
-							e.Kind = "tool_result"
-						} else {
+						if bt != "tool_result" {
 							e.Kind = "tool_call"
 						}
 					}
+				}
+				if allResults {
+					e.Role = "tool"
+					e.Kind = "tool_result"
 				}
 			} else {
 				e.Role = "system"

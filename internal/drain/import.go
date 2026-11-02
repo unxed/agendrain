@@ -396,7 +396,7 @@ func (b *Bundle) blocks(v any) []Block {
 		}
 		return []Block{block}
 	case "tool_use", "tool_call", "function_call":
-		return []Block{{Type: "tool_call", Text: jsonText(m)}}
+		return []Block{{Type: "tool_call", Text: jsonText(m), CallID: first(m["id"], m["call_id"]), Name: str(m["name"])}}
 	case "tool_result", "function_call_output":
 		meta := obj{}
 		for k, v := range m {
@@ -414,6 +414,10 @@ func (b *Bundle) blocks(v any) []Block {
 				bl.Type = "tool_result"
 			}
 			out = append(out, bl)
+		}
+		for i := range out {
+			out[i].Origin = "tool_result"
+			out[i].CallID = first(m["tool_use_id"], m["call_id"])
 		}
 		return out
 	default:
