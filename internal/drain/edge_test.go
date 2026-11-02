@@ -232,3 +232,31 @@ func TestVTVibeNativeSavedDialog(t *testing.T) {
 		t.Fatal(s)
 	}
 }
+
+func TestHistorySearchDoesNotCreateSubagentOwnership(t *testing.T) {
+	b := &Bundle{Sessions: []Session{{ID: "p", Events: []Event{{Role: "tool", Name: "search_history", Blocks: []Block{textBlock(`{"thread_id":"unrelated"}`)}}}}, {ID: "unrelated"}}}
+	if err := b.Select("p"); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Sessions) != 1 {
+		t.Fatal(joined(b))
+	}
+}
+
+func TestStripModelsInsideEncodedToolArguments(t *testing.T) {
+	b := &Bundle{Sessions: []Session{{ID: "p", Events: []Event{{Role: "assistant", Blocks: []Block{textBlock(`{"arguments":"{\"model\":\"bespoke-v12\"}"}`), textBlock("bespoke-v12 chose this")}}}}}}
+	if err := Prepare(b, Options{StripModels: true}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(joined(b), "bespoke-v12") {
+		t.Fatal(joined(b))
+	}
+}
+
+func TestOpenCodeLegacyToolAttachments(t *testing.T) {
+	p := put(t, t.TempDir(), "export.json", `{"info":{"id":"p"},"messages":[{"info":{"id":"a","role":"assistant"},"parts":[{"type":"tool","tool":"screenshot","callID":"c","state":{"status":"completed","input":{},"output":"Evidence","attachments":[{"type":"file","mime":"image/png","url":"data:image/png;base64,iVBORw=="}]}}]}]}`)
+	b := load(t, "opencode", p)
+	if len(b.Assets) != 1 || strings.Contains(joined(b), "iVBORw==") {
+		t.Fatal(joined(b))
+	}
+}
