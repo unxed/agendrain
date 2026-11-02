@@ -168,8 +168,31 @@ func (b *Bundle) openCodeParts(v any) []Block {
 		m := object(part)
 		typ := str(m["type"])
 		if typ == "tool" {
-			// Keep input, status, output, errors, and nested session references.
-			out = append(out, Block{Type: "tool", Text: jsonText(m)})
+			meta := obj{}
+			for k, v := range m {
+				if k != "state" {
+					meta[k] = v
+				}
+			}
+			state := object(m["state"])
+			stateMeta := obj{}
+			for k, v := range state {
+				if k != "content" && k != "output" {
+					stateMeta[k] = v
+				}
+			}
+			meta["state"] = stateMeta
+			out = append(out, Block{Type: "tool_call", Text: jsonText(meta)})
+			content := state["content"]
+			if content == nil {
+				content = state["output"]
+			}
+			for _, bl := range b.blocks(content) {
+				if bl.Type == "text" {
+					bl.Type = "tool_result"
+				}
+				out = append(out, bl)
+			}
 		} else {
 			out = append(out, b.blocks(m)...)
 		}
@@ -213,6 +236,9 @@ func (b *Bundle) openCodeDB(input string) error {
 						e.Blocks = b.openCodeParts(m["content"])
 						if len(e.Blocks) == 0 {
 							e.Blocks = b.blocks(m["text"])
+						}
+						for _, file := range arr(m["files"]) {
+							e.Blocks = append(e.Blocks, b.blocks(file)...)
 						}
 						if tableExists(q, "session_part") {
 							parts, err := records(q, "SELECT * FROM session_part WHERE message_id=? ORDER BY ordinal", e.ID)

@@ -43,7 +43,6 @@ func (b *Bundle) codex(input string) error {
 	target := ""
 	for _, p := range ps {
 		s := Session{ID: strings.TrimSuffix(strings.TrimSuffix(filepath.Base(p), ".zst"), ".jsonl"), Source: "codex"}
-		var mirrors []Event
 		err := lines(p, func(m obj) error {
 			payload := object(m["payload"])
 			typ := str(m["type"])
@@ -102,7 +101,7 @@ func (b *Bundle) codex(input string) error {
 					for _, im := range arr(payload["images"]) {
 						blocks = append(blocks, b.blocks(obj{"type": "input_image", "image_url": im})...)
 					}
-					mirrors = append(mirrors, Event{Time: when, Role: role, Kind: "message", Blocks: blocks})
+					s.Events = append(s.Events, Event{Time: when, Role: role, Kind: "event_mirror", Blocks: blocks})
 					return nil
 				}
 				if pt == "token_count" || strings.HasSuffix(pt, "_delta") {
@@ -127,14 +126,19 @@ func (b *Bundle) codex(input string) error {
 				counts[e.Role+jsonText(e.Blocks)]++
 			}
 		}
-		for _, e := range mirrors {
-			k := e.Role + jsonText(e.Blocks)
-			if counts[k] > 0 {
-				counts[k]--
-			} else {
-				s.Events = append(s.Events, e)
+		ordered := s.Events[:0]
+		for _, e := range s.Events {
+			if e.Kind == "event_mirror" {
+				k := e.Role + jsonText(e.Blocks)
+				if counts[k] > 0 {
+					counts[k]--
+					continue
+				}
+				e.Kind = "message"
 			}
+			ordered = append(ordered, e)
 		}
+		s.Events = ordered
 		if single && filepath.Clean(p) == filepath.Clean(input) {
 			target = s.ID
 		}

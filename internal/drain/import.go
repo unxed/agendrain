@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -73,6 +72,12 @@ func (b *Bundle) warn(s string) {
 func (s *Session) model(v any) {
 	switch x := v.(type) {
 	case string:
+		if strings.HasPrefix(x, "{") {
+			if v, e := decode([]byte(x)); e == nil {
+				s.model(v)
+				return
+			}
+		}
 		if x != "" {
 			for _, m := range s.Models {
 				if x == m {
@@ -393,7 +398,24 @@ func (b *Bundle) blocks(v any) []Block {
 	case "tool_use", "tool_call", "function_call":
 		return []Block{{Type: "tool_call", Text: jsonText(m)}}
 	case "tool_result", "function_call_output":
-		return []Block{{Type: "tool_result", Text: jsonText(m)}}
+		meta := obj{}
+		for k, v := range m {
+			if k != "content" && k != "output" {
+				meta[k] = v
+			}
+		}
+		out := []Block{{Type: "tool_result", Text: jsonText(meta)}}
+		content := m["content"]
+		if content == nil {
+			content = m["output"]
+		}
+		for _, bl := range b.blocks(content) {
+			if bl.Type == "text" {
+				bl.Type = "tool_result"
+			}
+			out = append(out, bl)
+		}
+		return out
 	default:
 		// Unknown recorded context is preserved, rather than silently dropped.
 		return []Block{{Type: "context", Text: jsonText(m)}}
@@ -401,6 +423,7 @@ func (b *Bundle) blocks(v any) []Block {
 }
 
 func (b *Bundle) Select(id string) error {
+	b.linkChildren()
 	if id == "" {
 		return nil
 	}
@@ -436,12 +459,12 @@ func (b *Bundle) Select(id string) error {
 	}
 	for _, s := range out {
 		for _, e := range s.Events {
-			if strings.Contains(e.Name, "spawn") || strings.Contains(e.Name, "agent") {
+			if e.Role == "tool" || e.Kind == "tool_call" || strings.Contains(e.Name, "spawn") || strings.Contains(e.Name, "agent") {
 				for _, bl := range e.Blocks {
 					var v any
 					if json.Unmarshal([]byte(bl.Text), &v) == nil {
 						for _, ref := range references(v) {
-							if !known[ref] {
+							if !known[ref] && !b.hasAgentAlias(ref) {
 								b.warn("Referenced subagent " + ref + " is absent; provide the enclosing session store")
 							}
 						}
@@ -457,7 +480,7 @@ func references(v any) []string {
 	switch x := v.(type) {
 	case map[string]any:
 		for k, v := range x {
-			if k == "agent_id" || k == "thread_id" || k == "sessionID" {
+			if k == "agent_id" || k == "thread_id" || k == "sessionID" || k == "new_agent_id" || k == "subagentComposerId" || k == "subagentSessionId" {
 				if s := str(v); s != "" {
 					out = append(out, s)
 				}
@@ -470,6 +493,39 @@ func references(v any) []string {
 		}
 	}
 	return out
+}
+
+func (b *Bundle) hasAgentAlias(id string) bool {
+	for _, s := range b.Sessions {
+		if strings.HasSuffix(s.ID, "/agent-"+id) || strings.HasSuffix(s.ID, "/"+id) {
+			return true
+		}
+	}
+	return false
+}
+func (b *Bundle) linkChildren() {
+	index := map[string]int{}
+	for i, s := range b.Sessions {
+		index[s.ID] = i
+	}
+	for _, s := range b.Sessions {
+		for _, e := range s.Events {
+			if e.Role != "tool" && e.Kind != "tool_call" && e.Name == "" {
+				continue
+			}
+			for _, bl := range e.Blocks {
+				v, err := decode([]byte(bl.Text))
+				if err != nil {
+					continue
+				}
+				for _, id := range references(v) {
+					if i, ok := index[id]; ok && id != s.ID && b.Sessions[i].ParentID == "" && s.ParentID != id {
+						b.Sessions[i].ParentID = s.ID
+					}
+				}
+			}
+		}
+	}
 }
 
 // Discover returns platform-native candidates; it never creates or modifies stores.
@@ -506,5 +562,3 @@ func Discover(source string) []string {
 		return nil
 	}
 }
-
-func lineNumber(n int) string { return strconv.Itoa(n) }
