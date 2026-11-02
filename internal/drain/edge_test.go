@@ -260,3 +260,29 @@ func TestOpenCodeLegacyToolAttachments(t *testing.T) {
 		t.Fatal(joined(b))
 	}
 }
+
+func TestNativeVTVibeHistoricalRequestsAndExplicitSnapshots(t *testing.T) {
+	d := t.TempDir()
+	p := put(t, d, "dialog.json", `{"version":1,"context":{"/ctx/code.go":"cGFja2FnZSBwcml2YXRl"},"turns":[{"Role":"user","Text":"Question","Time":"2026-11-03T00:00:00Z"}],"requests":[{"before_turn":0,"system":"Historical exact prompt","model":"private-v5","question":"Question","outcome":"succeeded","context":["ctx/removed.go"]}]}`)
+	b := load(t, "vtvibe", p)
+	if err := Prepare(b, Options{Files: "full", Roots: []string{d}}); err != nil {
+		t.Fatal(err)
+	}
+	s := joined(b)
+	if !strings.Contains(s, "Historical exact prompt") || !strings.Contains(s, "package private") || !strings.Contains(s, "removed.go") {
+		t.Fatal(s)
+	}
+}
+
+func TestStripDisplayModelNames(t *testing.T) {
+	b := &Bundle{Sessions: []Session{{ID: "p", Events: []Event{{Role: "assistant", Blocks: []Block{textBlock("Claude Sonnet 4.5 and GPT 4o used Gemini 3.1 Pro")}}}}}}
+	if err := Prepare(b, Options{StripModels: true}); err != nil {
+		t.Fatal(err)
+	}
+	s := joined(b)
+	for _, name := range []string{"Claude Sonnet 4.5", "GPT 4o", "Gemini 3.1 Pro"} {
+		if strings.Contains(s, name) {
+			t.Error(s)
+		}
+	}
+}
