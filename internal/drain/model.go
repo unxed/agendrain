@@ -4,12 +4,13 @@ package drain
 const Version = 1
 
 type Bundle struct {
-	Version    int               `json:"version"`
-	Sessions   []Session         `json:"sessions"`
-	Warnings   []string          `json:"warnings,omitempty"`
-	Changes    []string          `json:"changes,omitempty"`
-	Assets     map[string][]byte `json:"-"`
-	AssetFiles map[string]string `json:"asset_files,omitempty"`
+	Version        int               `json:"version"`
+	Sessions       []Session         `json:"sessions"`
+	Warnings       []string          `json:"warnings,omitempty"`
+	Changes        []string          `json:"changes,omitempty"`
+	Assets         map[string][]byte `json:"-"`
+	AssetFiles     map[string]string `json:"asset_files,omitempty"`
+	redactedModels []string
 }
 
 type Session struct {
@@ -54,4 +55,8 @@ type Options struct {
 	PruneToolsBefore string
 	RewriteCommand   string
 	MaxFileBytes     int64
+	DescribeCommand  string
+	DescribeArgs     []string
+	RewriteArgs      []string
+	ImageArchive     string
 }

@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/flate"
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -13,7 +12,6 @@ import (
 	"mime"
 	"net/http"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"sort"
@@ -168,21 +166,18 @@ func render(b *Bundle, o Options, imageDir string) (rendered, error) {
 	}
 	r.md = []byte(out.String())
 	if o.RewriteCommand != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		cmd := exec.CommandContext(ctx, o.RewriteCommand)
-		cmd.Stdin = bytes.NewReader(r.md)
-		var stderr bytes.Buffer
-		cmd.Stderr = &limitedBuffer{buf: &stderr, max: 4096}
-		var rewritten bytes.Buffer
-		cmd.Stdout = &limitedBuffer{buf: &rewritten, max: 32 << 20}
-		if err := cmd.Run(); err != nil {
-			return r, fmt.Errorf("rewrite command: %w: %s", err, stderr.String())
+		rewritten, err := runCommand(o.RewriteCommand, o.RewriteArgs, r.md, 32<<20)
+		if err != nil {
+			return r, err
 		}
-		if rewritten.Len() == 0 {
-			return r, fmt.Errorf("rewrite command returned empty output")
+		if o.StripModels {
+			tmp := &Bundle{Assets: map[string][]byte{}, Sessions: []Session{{Models: b.redactedModels, Events: []Event{{Blocks: []Block{textBlock(string(rewritten))}}}}}}
+			if err := stripModels(tmp, o.ModelNames); err != nil {
+				return r, err
+			}
+			rewritten = []byte(tmp.Sessions[0].Events[0].Blocks[0].Text)
 		}
-		r.md = append([]byte("# Explicitly requested rewritten handoff\n\nThis is a potentially lossy rewrite. The canonical manifest in ZIP mode retains the prepared events.\n\n"), rewritten.Bytes()...)
+		r.md = append([]byte("# Explicitly requested rewritten handoff\n\nThis is a potentially lossy rewrite. The canonical manifest in ZIP mode retains the prepared events.\n\n"), rewritten...)
 	}
 	return r, nil
 }
@@ -208,6 +203,9 @@ func Write(b *Bundle, output string, o Options) error {
 	if o.Format != "zip" && o.Format != "md" && o.Format != "md-zip" {
 		return fmt.Errorf("--format must be zip, md, or md-zip")
 	}
+	if o.ImageArchive != "" && o.Format != "md" {
+		return fmt.Errorf("--image-archive requires --format md")
+	}
 	if output == "" {
 		return fmt.Errorf("output path is required")
 	}
@@ -222,6 +220,19 @@ func Write(b *Bundle, output string, o Options) error {
 	}
 	imageDir := "images"
 	if o.Format == "md" {
+		if o.ImageArchive != "" {
+			if filepath.Clean(o.ImageArchive) == filepath.Clean(output) {
+				return fmt.Errorf("Markdown and image archive paths must differ")
+			}
+			if err := writeZIP(o.ImageArchive, r.files); err != nil {
+				return err
+			}
+			if err := atomicFile(output, func(w io.Writer) error { return writeBytes(w, r.md) }); err != nil {
+				os.Remove(o.ImageArchive)
+				return err
+			}
+			return nil
+		}
 		imageDir = strings.TrimSuffix(filepath.Base(output), filepath.Ext(output)) + "_images"
 	}
 	r, err := render(b, o, imageDir)
@@ -268,11 +279,14 @@ func Write(b *Bundle, output string, o Options) error {
 		}
 		r.files["manifest.json"] = append(raw, '\n')
 	}
+	return writeZIP(output, r.files)
+}
+func writeZIP(output string, files map[string][]byte) error {
 	return atomicFile(output, func(w io.Writer) error {
 		z := zip.NewWriter(w)
 		z.RegisterCompressor(zip.Deflate, func(w io.Writer) (io.WriteCloser, error) { return flate.NewWriter(w, flate.BestCompression) })
 		var names []string
-		for name := range r.files {
+		for name := range files {
 			names = append(names, name)
 		}
 		sort.Strings(names)
@@ -284,7 +298,7 @@ func Write(b *Bundle, output string, o Options) error {
 			if e != nil {
 				return e
 			}
-			if e = writeBytes(f, r.files[name]); e != nil {
+			if e = writeBytes(f, files[name]); e != nil {
 				return e
 			}
 		}

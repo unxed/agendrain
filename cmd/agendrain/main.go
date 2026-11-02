@@ -78,6 +78,7 @@ func run(args []string, out, stderr io.Writer) int {
 	fs.StringVar(&o.Format, "format", "zip", "zip, md (plus image directory), or md-zip (Markdown and numbered images only)")
 	fs.BoolVar(&o.StripModels, "strip-models", false, "remove recorded/recognized model identities from text and metadata")
 	var models, roots, histories stringList
+	var describeArgs, rewriteArgs stringList
 	fs.Var(&models, "model-name", "additional model identity to remove; repeatable")
 	fs.Var(&roots, "allow-root", "allow reading referenced files under this directory; repeatable")
 	fs.Var(&histories, "history", "include sessions from a previous agendrain ZIP; repeatable")
@@ -89,6 +90,10 @@ func run(args []string, out, stderr io.Writer) int {
 	fs.BoolVar(&o.Base64, "base64", false, "include non-image attachment bytes as base64 in Markdown modes")
 	fs.StringVar(&o.PruneToolsBefore, "prune-tools-before", "", "explicitly omit old tool results before RFC3339 time; preserves decisions")
 	fs.StringVar(&o.RewriteCommand, "rewrite-command", "", "optional executable: read Markdown on stdin, emit a lossy rewrite on stdout (no shell)")
+	fs.StringVar(&o.DescribeCommand, "describe-command", "", "optional executable: read attachment JSON on stdin, emit a description on stdout")
+	fs.Var(&describeArgs, "describe-arg", "argument to the description executable; repeatable")
+	fs.Var(&rewriteArgs, "rewrite-arg", "argument to the rewrite executable; repeatable")
+	fs.StringVar(&o.ImageArchive, "image-archive", "", "with --format md, write a separate image ZIP instead of a directory")
 	if err := fs.Parse(args[1:]); err != nil {
 		if err == flag.ErrHelp {
 			return 0
@@ -183,6 +188,8 @@ func run(args []string, out, stderr io.Writer) int {
 	}
 	o.Roots = roots
 	o.ModelNames = models
+	o.DescribeArgs = describeArgs
+	o.RewriteArgs = rewriteArgs
 	if *descriptions != "" {
 		raw, e := os.ReadFile(*descriptions)
 		if e != nil {

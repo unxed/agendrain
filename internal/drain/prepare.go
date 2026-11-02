@@ -36,6 +36,7 @@ func Prepare(b *Bundle, o Options) error {
 	if b.Assets == nil {
 		b.Assets = map[string][]byte{}
 	}
+	descriptionCache := map[string]string{}
 	var before time.Time
 	var err error
 	if o.PruneToolsBefore != "" {
@@ -62,7 +63,7 @@ func Prepare(b *Bundle, o Options) error {
 						continue
 					}
 					seen[p] = true
-					bl, e2 := readReference(p, s.CWD, o)
+					bl, data, e2 := readReference(p, s.CWD, o)
 					if e2 != nil {
 						b.warn("File reference " + p + ": " + e2.Error())
 						continue
@@ -71,8 +72,15 @@ func Prepare(b *Bundle, o Options) error {
 						continue
 					}
 					if bl.Asset != "" {
-						b.Assets[bl.Asset] = []byte(bl.Text)
-						bl.Text = ""
+						b.Assets[bl.Asset] = data
+					}
+					if o.Files == "summary" && o.DescribeCommand != "" {
+						summary, e2 := describe(o, "file", bl.Path, bl.MIME, data)
+						if e2 != nil {
+							return e2
+						}
+						bl.Text = summary
+						bl.Description += "; external semantic description"
 					}
 					e.Blocks = append(e.Blocks, *bl)
 				}
@@ -95,8 +103,23 @@ func Prepare(b *Bundle, o Options) error {
 				bl := &e.Blocks[bi]
 				if bl.Type == "image" && o.Images != "" && o.Images != "keep" {
 					desc := first(o.Descriptions[bl.Asset], o.Descriptions[bl.Path], bl.Description)
+					if o.Images == "describe" && desc == "" && o.DescribeCommand != "" {
+						if cached := descriptionCache[bl.Asset]; cached != "" {
+							desc = cached
+						} else {
+							data, ok := b.Assets[bl.Asset]
+							if !ok {
+								return fmt.Errorf("image %s has no recorded bytes to describe", first(bl.Path, bl.Asset))
+							}
+							desc, err = describe(o, "image", bl.Path, bl.MIME, data)
+							if err != nil {
+								return err
+							}
+							descriptionCache[bl.Asset] = desc
+						}
+					}
 					if o.Images == "describe" && desc == "" {
-						return fmt.Errorf("image %s in %s has no description; supply --descriptions", first(bl.Path, bl.Asset), label)
+						return fmt.Errorf("image %s in %s has no description; supply --descriptions or --describe-command", first(bl.Path, bl.Asset), label)
 					}
 					if desc == "" {
 						desc = "Image explicitly omitted"
@@ -106,7 +129,7 @@ func Prepare(b *Bundle, o Options) error {
 					bl.Asset = ""
 					b.Changes = append(b.Changes, label+": image replaced with text")
 				}
-				if o.Compact && (e.Role == "tool" || e.Role == "system" || e.Role == "developer") && bl.Asset == "" && bl.Text != "" {
+				if o.Compact && (e.Role == "tool" || e.Role == "system" || e.Role == "developer" || bl.Type == "tool_result") && bl.Asset == "" && bl.Text != "" {
 					key := e.Role + "\x00" + e.Kind + "\x00" + bl.Type + "\x00" + bl.Text
 					if prev, ok := seen[key]; ok {
 						bl.Type = "reference"
@@ -187,29 +210,29 @@ func fileReferences(text string) []string {
 	}
 	return out
 }
-func readReference(p, cwd string, o Options) (*Block, error) {
+func readReference(p, cwd string, o Options) (*Block, []byte, error) {
 	if strings.HasPrefix(p, "file://") {
 		u, e := url.Parse(p)
 		if e != nil {
-			return nil, e
+			return nil, nil, e
 		}
 		p = u.Path
 	} else if strings.Contains(p, "://") || strings.HasPrefix(p, "data:") {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if !filepath.IsAbs(p) {
 		if cwd == "" {
-			return nil, fmt.Errorf("relative path has no recorded working directory")
+			return nil, nil, fmt.Errorf("relative path has no recorded working directory")
 		}
 		p = filepath.Join(cwd, p)
 	}
 	abs, err := filepath.Abs(p)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	real, err := filepath.EvalSymlinks(abs)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	allowed := false
 	for _, root := range o.Roots {
@@ -228,37 +251,37 @@ func readReference(p, cwd string, o Options) (*Block, error) {
 		}
 	}
 	if !allowed {
-		return nil, fmt.Errorf("outside --allow-root (including symlink resolution)")
+		return nil, nil, fmt.Errorf("outside --allow-root (including symlink resolution)")
 	}
 	f, err := os.Open(real)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("not a regular file")
+		return nil, nil, fmt.Errorf("not a regular file")
 	}
 	limit := o.MaxFileBytes
 	if limit == 0 {
 		limit = 8 << 20
 	}
 	if info.Size() > limit {
-		return nil, fmt.Errorf("exceeds --max-file-bytes (%d)", limit)
+		return nil, nil, fmt.Errorf("exceeds --max-file-bytes (%d)", limit)
 	}
 	data, err := bounded(f, limit)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	sum := sha256.Sum256(data)
 	mime := http.DetectContentType(data)
 	bl := &Block{Type: "file", Path: p, MIME: mime, Description: fmt.Sprintf("Current local file: %d bytes; sha256:%s; not a historical snapshot", len(data), hex.EncodeToString(sum[:]))}
 	if o.Files == "summary" {
 		bl.Text = fileSummary(data)
-		return bl, nil
+		return bl, data, nil
 	}
 	if utf8.Valid(data) && !bytes.ContainsRune(data, 0) && !strings.HasPrefix(mime, "image/") {
 		bl.Type = "file_content"
@@ -267,13 +290,9 @@ func readReference(p, cwd string, o Options) (*Block, error) {
 		if strings.HasPrefix(mime, "image/") {
 			bl.Type = "image"
 		}
-		bl.Asset = hex.EncodeToString(sum[:]) /* installed below by caller */
+		bl.Asset = hex.EncodeToString(sum[:])
 	}
-	// Binary content is passed through an internal block field only temporarily.
-	if bl.Asset != "" {
-		bl.Text = string(data)
-	}
-	return bl, nil
+	return bl, data, nil
 }
 func fileSummary(data []byte) string {
 	if !utf8.Valid(data) || bytes.ContainsRune(data, 0) {
@@ -311,7 +330,7 @@ func fileSummary(data []byte) string {
 }
 
 func stripModels(b *Bundle, extra []string) error {
-	names := append([]string{}, extra...)
+	names := append(append([]string{}, b.redactedModels...), extra...)
 	for _, s := range b.Sessions {
 		names = append(names, s.Models...)
 	}
@@ -356,6 +375,7 @@ func stripModels(b *Bundle, extra []string) error {
 			}
 		}
 	}
+	b.redactedModels = names
 	sort.Slice(names, func(i, j int) bool { return len(names[i]) > len(names[j]) })
 	replace := func(s string) string {
 		for _, name := range names {
