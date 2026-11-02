@@ -394,6 +394,12 @@ func stripModels(b *Bundle, extra []string) error {
 			for _, v := range x {
 				collect(v)
 			}
+		case string:
+			if strings.HasPrefix(x, "{") || strings.HasPrefix(x, "[") {
+				if v, e := decode([]byte(x)); e == nil {
+					collect(v)
+				}
+			}
 		}
 	}
 	raw, err := json.Marshal(b)

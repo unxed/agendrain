@@ -360,7 +360,7 @@ func (b *Bundle) blocks(v any) []Block {
 	t := str(m["type"])
 	switch t {
 	case "text", "input_text", "output_text":
-		return []Block{textBlock(first(m["text"], m["content"]))}
+		return append([]Block{textBlock(first(m["text"], m["content"]))}, metadata(m, "type", "text", "content")...)
 	case "thinking", "reasoning":
 		s := first(m["thinking"], m["text"])
 		if s == "" {
@@ -484,21 +484,13 @@ func (b *Bundle) Select(id string) error {
 		known[s.ID] = true
 	}
 	for _, s := range out {
-		for _, e := range s.Events {
-			if e.Role == "tool" || e.Kind == "tool_call" || strings.Contains(e.Name, "spawn") || strings.Contains(e.Name, "agent") {
-				for _, bl := range e.Blocks {
-					var v any
-					if json.Unmarshal([]byte(bl.Text), &v) == nil {
-						for _, ref := range references(v) {
-							if !known[ref] && !b.hasAgentAlias(ref) {
-								b.warn("Referenced subagent " + ref + " is absent; provide the enclosing session store")
-							}
-						}
-					}
-				}
+		for _, ref := range spawnReferences(s) {
+			if !known[ref] && !b.hasAgentAlias(ref) {
+				b.warn("Referenced subagent " + ref + " is absent; provide the enclosing session store")
 			}
 		}
 	}
+
 	return nil
 }
 func references(v any) []string {
@@ -535,23 +527,59 @@ func (b *Bundle) linkChildren() {
 		index[s.ID] = i
 	}
 	for _, s := range b.Sessions {
-		for _, e := range s.Events {
-			if e.Role != "tool" && e.Kind != "tool_call" && e.Name == "" {
-				continue
+		for _, id := range spawnReferences(s) {
+			if i, ok := index[id]; ok && id != s.ID && b.Sessions[i].ParentID == "" && s.ParentID != id {
+				b.Sessions[i].ParentID = s.ID
 			}
-			for _, bl := range e.Blocks {
+		}
+	}
+}
+func spawnTool(name string) bool {
+	name = strings.ToLower(name)
+	for _, n := range []string{"spawn_agent", "create_agent", "run_subagent", "task", "agent", "delegate_task"} {
+		if name == n || strings.HasSuffix(name, "."+n) || strings.HasSuffix(name, "__"+n) {
+			return true
+		}
+	}
+	return false
+}
+func spawnReferences(s Session) []string {
+	calls := map[string]bool{}
+	for _, e := range s.Events {
+		if spawnTool(e.Name) && e.CallID != "" {
+			calls[e.CallID] = true
+		}
+		for _, bl := range e.Blocks {
+			if bl.Type == "tool_call" {
 				v, err := decode([]byte(bl.Text))
 				if err != nil {
 					continue
 				}
-				for _, id := range references(v) {
-					if i, ok := index[id]; ok && id != s.ID && b.Sessions[i].ParentID == "" && s.ParentID != id {
-						b.Sessions[i].ParentID = s.ID
+				m := object(v)
+				if spawnTool(first(bl.Name, m["name"], m["tool"])) {
+					if c := first(bl.CallID, m["id"], m["call_id"], m["callID"]); c != "" {
+						calls[c] = true
 					}
 				}
 			}
 		}
 	}
+	var out []string
+	for _, e := range s.Events {
+		isSpawn := spawnTool(e.Name) || calls[e.CallID] || strings.Contains(e.Kind, "agent_spawn")
+		for _, bl := range e.Blocks {
+			v, err := decode([]byte(bl.Text))
+			if err != nil {
+				continue
+			}
+			m := object(v)
+			blockSpawn := spawnTool(first(bl.Name, m["name"], m["tool"])) || calls[bl.CallID]
+			if isSpawn || blockSpawn {
+				out = append(out, references(v)...)
+			}
+		}
+	}
+	return out
 }
 
 // Discover returns platform-native candidates; it never creates or modifies stores.
