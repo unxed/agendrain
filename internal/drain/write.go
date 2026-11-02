@@ -220,6 +220,14 @@ func Write(b *Bundle, output string, o Options) error {
 	}
 	imageDir := "images"
 	if o.Format == "md" {
+
+		imageDir = strings.TrimSuffix(filepath.Base(output), filepath.Ext(output)) + "_images"
+	}
+	r, err := render(b, o, imageDir)
+	if err != nil {
+		return err
+	}
+	if o.Format == "md" {
 		if o.ImageArchive != "" {
 			if filepath.Clean(o.ImageArchive) == filepath.Clean(output) {
 				return fmt.Errorf("Markdown and image archive paths must differ")
@@ -233,13 +241,6 @@ func Write(b *Bundle, output string, o Options) error {
 			}
 			return nil
 		}
-		imageDir = strings.TrimSuffix(filepath.Base(output), filepath.Ext(output)) + "_images"
-	}
-	r, err := render(b, o, imageDir)
-	if err != nil {
-		return err
-	}
-	if o.Format == "md" {
 		imagePath := filepath.Join(dir, imageDir)
 		if len(r.files) > 0 {
 			if _, e := os.Lstat(imagePath); e == nil {
