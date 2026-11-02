@@ -153,3 +153,38 @@ func TestPruningKeepsUserAndAssistantDecisions(t *testing.T) {
 		t.Fatal(s)
 	}
 }
+
+func TestCodexCLIAndDesktop(t *testing.T) {
+	for _, origin := range []string{"codex_cli_rs", "Codex Desktop"} {
+		t.Run(origin, func(t *testing.T) {
+			p := put(t, t.TempDir(), "rollout.jsonl", `{"type":"session_meta","payload":{"id":"p","originator":"`+origin+`","source":"vscode","base_instructions":{"text":"Exact base prompt"}}}`+"\n"+`{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"App instructions"}]}}`+"\n"+`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_image","image_url":"data:image/png;base64,iVBORw=="}]}}`+"\n")
+			b := load(t, "codex", p)
+			if len(b.Assets) != 1 || !strings.Contains(joined(b), origin) || !strings.Contains(joined(b), "Exact base prompt") || !strings.Contains(joined(b), "App instructions") {
+				t.Fatal(joined(b))
+			}
+		})
+	}
+}
+
+func TestSQLiteURIWithSpecialPathAndReadOnly(t *testing.T) {
+	p := database(t, `CREATE TABLE proof(value TEXT); INSERT INTO proof VALUES('original');`)
+	d := filepath.Join(t.TempDir(), "space # unicode тест")
+	if err := os.Mkdir(d, 0700); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(d, "question?.db")
+	if os.PathSeparator == '\\' {
+		dest = filepath.Join(d, "question.db")
+	}
+	if err := os.Rename(p, dest); err != nil {
+		t.Fatal(err)
+	}
+	db, err := openDB(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.Exec(`INSERT INTO proof VALUES('changed')`); err == nil {
+		t.Fatal("store writable")
+	}
+}

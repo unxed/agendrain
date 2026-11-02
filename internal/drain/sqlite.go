@@ -25,7 +25,13 @@ func openDB(path string) (*sql.DB, error) {
 	if _, e = os.Stat(abs); e != nil {
 		return nil, e
 	}
-	u := url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}
+	uriPath := filepath.ToSlash(abs)
+	// file://C:/... treats the drive letter as a URI authority. SQLite
+	// requires file:///C:/... for an absolute Windows drive path.
+	if len(uriPath) > 1 && uriPath[1] == ':' {
+		uriPath = "/" + uriPath
+	}
+	u := url.URL{Scheme: "file", Path: uriPath}
 	q := u.Query()
 	q.Set("mode", "ro")
 	q.Add("_pragma", "query_only(1)")
