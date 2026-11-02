@@ -1,5 +1,16 @@
 # agendrain
 
+## Quick start: Claude Code ran out of tokens
+
+Download and unpack the binary for your OS from [Releases](https://github.com/unxed/agendrain/releases/latest), then run:
+
+```sh
+./agendrain list --source claude
+./agendrain export --source claude --session SESSION_ID --output claude-handoff.zip
+```
+
+Copy `SESSION_ID` from the list. Give `claude-handoff.zip` to the next agent and ask it to read `conversation.md` and continue. **No Claude tokens, API key, or network access required.** On Windows use `agendrain.exe` instead of `./agendrain`.
+
 Export recorded AI agent conversations into a portable handoff that a person or another agent can read and continue. Written in Go; intended for Linux, macOS, and Windows. SQLite support does not require a C compiler.
 
 The current scope is **local applications and offline input files**: Codex CLI and Desktop, Claude Code, Claude Desktop's available local agent logs or a supplied data export, OpenCode, Cursor, and vtvibe from [unxed/f4](https://github.com/unxed/f4). See [source coverage and limitations](docs/SOURCES.md). Web session APIs and sandbox access are [future ideas](docs/IDEAS.md).
@@ -8,7 +19,7 @@ agendrain keeps recorded messages, available instructions and context, tool call
 
 ## Install
 
-
+Prebuilt releases cover Linux, macOS and Windows on amd64 and arm64. Verify downloads against the release's `SHA256SUMS`.
 To install from source, use Go 1.22 or newer:
 
 ```sh

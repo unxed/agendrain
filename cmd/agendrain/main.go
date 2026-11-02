@@ -268,6 +268,9 @@ func run(args []string, out, stderr io.Writer) int {
 		b.Warnings = append(history.Warnings, b.Warnings...)
 		b.Changes = append(history.Changes, b.Changes...)
 		for k, v := range history.Assets {
+			if old, ok := b.Assets[k]; ok && !bytes.Equal(old, v) {
+				return fail(fmt.Errorf("history has conflicting attachment %s", k))
+			}
 			b.Assets[k] = v
 		}
 	}
