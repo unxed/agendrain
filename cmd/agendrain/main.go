@@ -203,11 +203,13 @@ func run(args []string, out, stderr io.Writer) int {
 	if command == "list" {
 		if *jsonList {
 			type row struct {
-				ID     string `json:"id"`
-				Parent string `json:"parent_id,omitempty"`
-				Source string `json:"source"`
-				Title  string `json:"title,omitempty"`
-				Events *int   `json:"events,omitempty"`
+				ID       string `json:"id"`
+				Parent   string `json:"parent_id,omitempty"`
+				Source   string `json:"source"`
+				Title    string `json:"title,omitempty"`
+				Events   *int   `json:"events,omitempty"`
+				CWD      string `json:"cwd,omitempty"`
+				LastTime string `json:"last_time,omitempty"`
 			}
 			rows := make([]row, 0, len(b.Sessions))
 			for _, s := range b.Sessions {
@@ -216,7 +218,13 @@ func run(args []string, out, stderr io.Writer) int {
 					count := len(s.Events)
 					events = &count
 				}
-				rows = append(rows, row{s.ID, s.ParentID, s.Source, s.Title, events})
+				lastTime := ""
+				for _, e := range s.Events {
+					if e.Time != "" {
+						lastTime = e.Time
+					}
+				}
+				rows = append(rows, row{s.ID, s.ParentID, s.Source, s.Title, events, s.CWD, lastTime})
 			}
 			if err = json.NewEncoder(out).Encode(rows); err != nil {
 				return fail(err)
@@ -227,7 +235,13 @@ func run(args []string, out, stderr io.Writer) int {
 				if s.Events != nil {
 					count = fmt.Sprintf("%d events", len(s.Events))
 				}
-				fmt.Fprintf(out, "%s\t%s\t%s\t%s\tparent=%s\n", s.ID, s.Source, count, s.Title, s.ParentID)
+				lastTime := ""
+				for _, e := range s.Events {
+					if e.Time != "" {
+						lastTime = e.Time
+					}
+				}
+				fmt.Fprintf(out, "%s\t%s\t%s\t%s\tparent=%s\tcwd=%s\tlast=%s\n", s.ID, s.Source, count, s.Title, s.ParentID, s.CWD, lastTime)
 			}
 		}
 		for _, w := range b.Warnings {

@@ -9,7 +9,7 @@ Download and unpack the binary for your OS from [Releases](https://github.com/un
 ./agendrain export --source claude --session SESSION_ID --output claude-handoff.zip
 ```
 
-Copy `SESSION_ID` from the list. Give `claude-handoff.zip` to the next agent and ask it to read `conversation.md` and continue. **No Claude tokens, API key, or network access required.** On Windows use `agendrain.exe` instead of `./agendrain`.
+Copy `SESSION_ID` from the list (use `cwd` and `last` to identify your chat). Give `claude-handoff.zip` to the next agent and ask it to read `conversation.md` and continue. **No Claude tokens, API key, or network access required.** On Windows use `agendrain.exe` instead of `./agendrain`.
 
 Export recorded AI agent conversations into a portable handoff that a person or another agent can read and continue. Written in Go; intended for Linux, macOS, and Windows. SQLite support does not require a C compiler.
 
