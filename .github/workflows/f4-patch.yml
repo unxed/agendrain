@@ -1,0 +1,32 @@
+name: f4 transcript patch
+
+on: [push, pull_request, workflow_dispatch]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: agendrain
+      - uses: actions/checkout@v4
+        with:
+          repository: unxed/f4
+          ref: e2740983807c990c17d5b1b6182944d63f59c130
+          path: f4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.6'
+          cache-dependency-path: f4/go.sum
+      - name: Check patch against pinned upstream
+        working-directory: f4
+        run: git apply --check ../agendrain/contrib/f4-vtvibe-transcript.patch
+      - name: Apply patch
+        working-directory: f4
+        run: git apply ../agendrain/contrib/f4-vtvibe-transcript.patch
+      - name: Test vtvibe with race detector
+        working-directory: f4
+        run: go test -race ./internal/vtvibe

@@ -11,6 +11,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -148,7 +149,7 @@ func render(b *Bundle, o Options, imageDir string) (rendered, error) {
 						}
 						r.files[name] = data
 						r.assetFiles[bl.Asset] = name
-						fmt.Fprintf(&out, "![%s](%s)\n\n", escape(first(bl.Description, bl.Path, "Image")), name)
+						fmt.Fprintf(&out, "![%s](%s)\n\n", escape(first(bl.Description, bl.Path, "Image")), (&url.URL{Path: name}).EscapedPath())
 					} else if !mdOnly {
 						r.files[name] = data
 						r.assetFiles[bl.Asset] = name

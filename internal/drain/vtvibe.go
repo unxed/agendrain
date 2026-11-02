@@ -60,7 +60,44 @@ func (b *Bundle) vtvibe(input string) error {
 	for model := range object(m["spent"]) {
 		s.model(model)
 	}
-	for _, turn := range arr(m["turns"]) {
+	requests := arr(m["requests"])
+	turns := arr(m["turns"])
+	groups := map[int][]obj{}
+	for _, request := range requests {
+		r := object(request)
+		n, _ := r["before_turn"].(float64)
+		at := int(n)
+		if at < 0 {
+			at = 0
+		}
+		if at > len(turns) {
+			at = len(turns)
+		}
+		groups[at] = append(groups[at], r)
+	}
+	for ti := 0; ti <= len(turns); ti++ {
+		for _, r := range groups[ti] {
+			s.model(r["model"])
+			blocks := b.blocks(r["system"])
+			for _, p := range arr(r["context"]) {
+				blocks = append(blocks, Block{Type: "file", Path: "ai://" + strings.TrimPrefix(str(p), "/")})
+			}
+			s.Events = append(s.Events, Event{Role: "system", Kind: "request_instructions", Time: stamp(r["time"]), Blocks: blocks})
+			if str(r["outcome"]) != "succeeded" && str(r["question"]) != "" {
+				s.Events = append(s.Events, Event{Role: "user", Kind: "attempted_request", Time: stamp(r["time"]), Blocks: b.blocks(r["question"])})
+			}
+			state := obj{}
+			for _, k := range []string{"outcome", "compact_level", "model"} {
+				if r[k] != nil {
+					state[k] = r[k]
+				}
+			}
+			s.Events = append(s.Events, Event{Role: "system", Kind: "request_outcome", Time: stamp(r["time"]), Blocks: []Block{{Type: "context", Text: jsonText(state)}}})
+		}
+		if ti == len(turns) {
+			break
+		}
+		turn := turns[ti]
 		t := object(turn)
 		role := first(t["Role"], t["role"])
 		text := first(t["Text"], t["text"])
@@ -109,7 +146,10 @@ func (b *Bundle) vtvibe(input string) error {
 		s.Events = append(s.Events, Event{Role: "system", Kind: "saved_state", Blocks: []Block{{Type: "context", Text: jsonText(extra)}}})
 	}
 	b.Sessions = append(b.Sessions, s)
-	b.warn("Saved vtvibe dialogs do not contain historical system prompts or transient bot tool histories unless recorded by the optional f4 export patch")
+	if len(requests) == 0 {
+		b.warn("Saved vtvibe dialog has no historical system prompts; optional f4 export patch records future prompts")
+	}
+	b.warn("Standalone vtvibe bot/manager/worker tool histories are not persisted; only reports inserted into the saved dialog are available")
 	return nil
 }
 func (b *Bundle) vibeSavedTree(input string) error {

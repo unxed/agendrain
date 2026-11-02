@@ -18,6 +18,7 @@ import (
 )
 
 var modelPattern = regexp.MustCompile(`(?i)\b(?:gpt-[a-z0-9][a-z0-9._-]*|chatgpt-[a-z0-9._-]+|claude-(?:opus|sonnet|haiku)[a-z0-9._-]*|claude-[0-9][a-z0-9._-]*|(?:opus|sonnet|haiku)-[0-9][a-z0-9._-]*|gemini-[a-z0-9._-]+|(?:o1|o3|o4)(?:-[a-z0-9._-]+)?|(?:llama|qwen|deepseek|mistral|codestral)[-_0-9][a-z0-9._:-]*)\b`)
+var displayModelPattern = regexp.MustCompile(`(?i)\b(?:claude\s+(?:(?:sonnet|opus|haiku)\s+)?[0-9][a-z0-9.]*(?:\s+(?:sonnet|opus|haiku))?|gpt\s+[0-9][a-z0-9.]*|gemini\s+[0-9][a-z0-9.]*(?:\s+(?:pro|flash|lite))?)\b`)
 var mdLink = regexp.MustCompile(`\[[^\]]*\]\(([^)]+)\)`)
 var codePath = regexp.MustCompile("`([^`\\n]+)`")
 var absPath = regexp.MustCompile(`(?:^|[\s"'])(/[^\s"'<>;,]+\.[A-Za-z0-9]{1,10})`)
@@ -428,7 +429,7 @@ func stripModels(b *Bundle, extra []string) error {
 				s = re.ReplaceAllString(s, "[model]")
 			}
 		}
-		return modelPattern.ReplaceAllString(s, "[model]")
+		return displayModelPattern.ReplaceAllString(modelPattern.ReplaceAllString(s, "[model]"), "[model]")
 	}
 	var transform func(any) any
 	transform = func(v any) any {

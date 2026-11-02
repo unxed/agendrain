@@ -1,0 +1,524 @@
+diff --git a/docs/VTVIBE.md b/docs/VTVIBE.md
+index 309a27a5..5e729e49 100644
+--- a/docs/VTVIBE.md
++++ b/docs/VTVIBE.md
+@@ -1915,3 +1915,29 @@ RO-файлы идут без пометки, но в системном про
+ - [ ] Пути из патчей валидируются на выход за корень проекта — есть тест.
+ - [ ] Ничего не пишется на диск без явного действия человека.
+ - [ ] Патч минимален, без попутного рефакторинга.
++
++
++### Portable local transcript export
++
++`ai://agendrain.json` is a generated, read-only file: copy it with F5 to
++export the current dialog in agendrain version 1 JSON. Copy `ctx/` alongside
++it only when an importer will explicitly be allowed to include file contents;
++references in the JSON use paths such as `ctx/example.go`. The export itself
++contains no context file contents, image bytes, API keys or GitHub tokens.
++It is generated outside the bounded context tree and is never included in
++VTPACK requests.
++
++Each `Session.ask` attempt records its base instructions, patch-mode prompt,
++other generated instructions, model, context file references, history
++compaction level and outcome at request time. Those records are saved in the
++existing dialog JSON under the optional `requests` field, so an archive or
++restart preserves earlier instructions, including failed attempts and the
++names of files removed later. Raw provider error messages are not exported.
++Dialogs saved before recording began retain their turns and current file
++references; a warning explains that their historical instructions are missing.
++Current settings are never presented as evidence of historical instructions.
++
++This export covers the Session dialog. Standalone bot, manager, worker and
++`RunAgent` tool histories have no persistent Session ownership; only reports
++actually added to the dialog are available here. A separate capture mechanism
++is needed before those transient conversations can be exported in full.
+diff --git a/internal/vtvibe/session.go b/internal/vtvibe/session.go
+index 948cd9ff..1084d13a 100644
+--- a/internal/vtvibe/session.go
++++ b/internal/vtvibe/session.go
+@@ -52,16 +52,17 @@ type Session struct {
+ 	// treeMu protects only the identity of tree: Reset takes the write lock
+ 	// while AIVFS operations, Draft, ClearDraft and Pack take the read lock.
+ 	// memTree.mu separately protects the tree contents.
+-	treeMu sync.RWMutex
+-	mu     sync.Mutex
+-	tree   *memTree
+-	turns  []Turn
+-	busy   bool
+-	status Status
+-	usage  Usage
+-	patch  *Patch // the ap patch of the latest answer, nil when it had none
+-	apMode bool   // ask the model for ap patches instead of whole files
+-	title  string // the dialog's name; the model may set it (f4#1842)
++	treeMu   sync.RWMutex
++	mu       sync.Mutex
++	tree     *memTree
++	turns    []Turn
++	requests []requestRecord
++	busy     bool
++	status   Status
++	usage    Usage
++	patch    *Patch // the ap patch of the latest answer, nil when it had none
++	apMode   bool   // ask the model for ap patches instead of whole files
++	title    string // the dialog's name; the model may set it (f4#1842)
+ 	// pending is the answer being streamed in, shown before it is complete;
+ 	// onUpdate is told whenever it grows (f4#1842, stage H2).
+ 	pending  string
+@@ -144,6 +145,7 @@ func NewSession() *Session {
+ func (s *Session) reset() {
+ 	s.tree = newMemTree()
+ 	s.turns = nil
++	s.requests = nil
+ 	s.usage = Usage{}
+ 	s.patch = nil
+ 	s.title = ""
+@@ -346,6 +348,7 @@ func (s *Session) ask(ctx context.Context, cfg Config, question string, order bo
+ 		system += tail.String() + refusedNote
+ 		msgs := append([]Message{{Role: "system", Content: system}}, historyMessages(history, level > 0, notes)...)
+ 		msgs = append(msgs, Message{Role: "user", Content: question, Images: images})
++		attempt := s.recordRequest(base+tail.String()+refusedNote, question, cfg.Model, level, keep)
+ 		reply, usage, err := cfg.ChatStream(ctx, msgs, func(piece string) {
+ 			s.mu.Lock()
+ 			s.pending += piece
+@@ -355,6 +358,7 @@ func (s *Session) ask(ctx context.Context, cfg Config, question string, order bo
+ 				notify()
+ 			}
+ 		})
++		s.finishRequest(attempt, err)
+ 		if err != nil {
+ 			s.mu.Lock()
+ 			s.pending = ""
+diff --git a/internal/vtvibe/store.go b/internal/vtvibe/store.go
+index 9bd1c5c8..9d713424 100644
+--- a/internal/vtvibe/store.go
++++ b/internal/vtvibe/store.go
+@@ -20,6 +20,7 @@ import (
+ const storeVersion = 1
+ 
+ type savedDialog struct {
++	Requests  []requestRecord   `json:"requests,omitempty"`
+ 	Version   int               `json:"version"`
+ 	Title     string            `json:"title,omitempty"`
+ 	PatchMode bool              `json:"patch_mode,omitempty"`
+@@ -87,6 +88,7 @@ func (s *Session) restoreLocked(d savedDialog) {
+ 	s.githubToken = d.GitHubToken
+ 	s.spent = d.Spent
+ 	s.applied = d.Applied
++	s.requests = d.Requests
+ 	s.writeSessionFile()
+ }
+ 
+@@ -99,7 +101,7 @@ func (s *Session) saveLocked() {
+ 	if s.storePath == "" {
+ 		return
+ 	}
+-	d := savedDialog{Version: storeVersion, Title: s.title, PatchMode: s.apMode, Turns: s.turns, Orders: s.orders, Mode: s.mode, GitHubToken: s.githubToken, Spent: s.spent, Applied: s.applied}
++	d := savedDialog{Requests: s.requests, Version: storeVersion, Title: s.title, PatchMode: s.apMode, Turns: s.turns, Orders: s.orders, Mode: s.mode, GitHubToken: s.githubToken, Spent: s.spent, Applied: s.applied}
+ 	for _, p := range s.tree.walkFiles(ctxDir) {
+ 		if data, ok := s.tree.readFile(p); ok {
+ 			if d.Context == nil {
+diff --git a/internal/vtvibe/transcript.go b/internal/vtvibe/transcript.go
+new file mode 100644
+index 00000000..5d89b598
+--- /dev/null
++++ b/internal/vtvibe/transcript.go
+@@ -0,0 +1,158 @@
++package vtvibe
++
++import (
++	"encoding/json"
++	"fmt"
++	"strings"
++	"time"
++)
++
++const transcriptFile = "/agendrain.json"
++
++// requestRecord stores instructions at send time. Packed local file contents
++// and provider credentials deliberately never enter this record. BeforeTurn
++// places attempts among the retained turns, including attempts that failed.
++type requestRecord struct {
++	BeforeTurn   int       `json:"before_turn"`
++	Time         time.Time `json:"time"`
++	Model        string    `json:"model,omitempty"`
++	System       string    `json:"system"`
++	Question     string    `json:"question"`
++	Context      []string  `json:"context,omitempty"`
++	CompactLevel int       `json:"compact_level,omitempty"`
++	Outcome      string    `json:"outcome"`
++}
++
++// These types mirror agendrain's portable version 1 schema without adding a
++// runtime dependency. File references are relative to a copied ai:// root.
++type transcriptBundle struct {
++	Version  int                 `json:"version"`
++	Sessions []transcriptSession `json:"sessions"`
++	Warnings []string            `json:"warnings,omitempty"`
++}
++type transcriptSession struct {
++	ID     string            `json:"id"`
++	Source string            `json:"source"`
++	Title  string            `json:"title,omitempty"`
++	Models []string          `json:"models,omitempty"`
++	Events []transcriptEvent `json:"events"`
++}
++type transcriptEvent struct {
++	Time   string            `json:"time,omitempty"`
++	Role   string            `json:"role"`
++	Kind   string            `json:"kind,omitempty"`
++	Blocks []transcriptBlock `json:"blocks"`
++}
++type transcriptBlock struct {
++	Type        string `json:"type"`
++	Text        string `json:"text,omitempty"`
++	Path        string `json:"path,omitempty"`
++	Description string `json:"description,omitempty"`
++}
++
++func (s *Session) recordRequest(system, question, model string, level int, keep func(string) bool) int {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	r := requestRecord{BeforeTurn: len(s.turns), Time: time.Now(), Model: model,
++		System: system, Question: question, CompactLevel: level, Outcome: "pending"}
++	for _, p := range s.tree.walkFiles(ctxDir) {
++		rel := strings.TrimPrefix(p, ctxDir+"/")
++		if !looksSecret(rel) && (keep == nil || keep(rel)) {
++			r.Context = append(r.Context, strings.TrimPrefix(p, "/"))
++		}
++	}
++	s.requests = append(s.requests, r)
++	s.saveLocked()
++	return len(s.requests) - 1
++}
++
++func (s *Session) finishRequest(index int, err error) {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	// A reset may have discarded an in-flight request.
++	if index < 0 || index >= len(s.requests) {
++		return
++	}
++	s.requests[index].Outcome = "succeeded"
++	if err != nil {
++		s.requests[index].Outcome = "failed"
++	}
++	s.saveLocked()
++}
++
++// transcript builds a read-only F5 export outside the bounded context tree.
++// Old dialogs have no prompt snapshots; do not replace that missing evidence
++// with today's configured prompt. JSON encoding these string-only fields cannot fail.
++func (s *Session) transcript() []byte {
++	s.mu.Lock()
++	defer s.mu.Unlock()
++	session := transcriptSession{ID: "vtvibe", Source: "vtvibe", Title: s.title, Events: []transcriptEvent{}}
++	add := func(role, kind, text string, when time.Time) {
++		stamp := ""
++		if !when.IsZero() {
++			stamp = when.UTC().Format(time.RFC3339Nano)
++		}
++		session.Events = append(session.Events, transcriptEvent{Role: role, Kind: kind, Time: stamp,
++			Blocks: []transcriptBlock{{Type: "text", Text: text}}})
++	}
++	request := func(r requestRecord) {
++		if r.Model != "" {
++			found := false
++			for _, m := range session.Models {
++				if m == r.Model {
++					found = true
++					break
++				}
++			}
++			if !found {
++				session.Models = append(session.Models, r.Model)
++			}
++		}
++		add("system", "instructions", r.System, r.Time)
++		if len(r.Context) > 0 {
++			e := transcriptEvent{Role: "system", Kind: "context", Time: r.Time.UTC().Format(time.RFC3339Nano), Blocks: []transcriptBlock{}}
++			for _, p := range r.Context {
++				e.Blocks = append(e.Blocks, transcriptBlock{Type: "file", Path: p, Description: "Attached context file; contents excluded from transcript"})
++			}
++			session.Events = append(session.Events, e)
++		}
++		if r.Outcome != "succeeded" || r.BeforeTurn >= len(s.turns) || s.turns[r.BeforeTurn].Role != "user" || s.turns[r.BeforeTurn].Text != r.Question {
++			add("user", "request", r.Question, r.Time)
++		}
++		add("system", "request_outcome", fmt.Sprintf("Request %s; history compaction level %d", r.Outcome, r.CompactLevel), r.Time)
++	}
++	attempts := make(map[int][]requestRecord)
++	for _, r := range s.requests {
++		attempts[r.BeforeTurn] = append(attempts[r.BeforeTurn], r)
++	}
++	for i := 0; i <= len(s.turns); i++ {
++		for _, r := range attempts[i] {
++			request(r)
++		}
++		if i < len(s.turns) {
++			t := s.turns[i]
++			role := t.Role
++			if role == "model" {
++				role = "system"
++			} // panel hint, not a model reply
++			add(role, "message", t.Text, t.Time)
++		}
++	}
++	// Files copied in after the last request are still useful references.
++	if files := s.tree.walkFiles(ctxDir); len(files) > 0 {
++		e := transcriptEvent{Role: "system", Kind: "current_context", Blocks: []transcriptBlock{}}
++		for _, p := range files {
++			e.Blocks = append(e.Blocks, transcriptBlock{Type: "file", Path: strings.TrimPrefix(p, "/"), Description: "Current context file; contents excluded from transcript"})
++		}
++		session.Events = append(session.Events, e)
++	}
++	b := transcriptBundle{Version: 1, Sessions: []transcriptSession{session}, Warnings: []string{
++		"Only Session dialog turns and captured request instructions are exported. Transient bot, manager, worker and tool-call histories are not retained by this session.",
++		"Packed file contents, image bytes, credentials and raw provider errors are excluded. Context references may refer to files removed since the request.",
++	}}
++	if len(s.requests) == 0 || (len(s.requests) > 0 && s.requests[0].BeforeTurn > 1) {
++		b.Warnings = append(b.Warnings, "Historical instructions before request recording began were not saved and cannot be reconstructed.")
++	}
++	data, _ := json.MarshalIndent(b, "", "  ")
++	return append(data, '\n')
++}
+diff --git a/internal/vtvibe/transcript_test.go b/internal/vtvibe/transcript_test.go
+new file mode 100644
+index 00000000..c4582711
+--- /dev/null
++++ b/internal/vtvibe/transcript_test.go
+@@ -0,0 +1,168 @@
++package vtvibe
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"net/http"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/unxed/f4/vfs"
++)
++
++func exportTranscript(t *testing.T, s *Session) (transcriptBundle, string) {
++	t.Helper()
++	v := NewVFS(s)
++	r, err := v.Open(context.Background(), "ai://agendrain.json")
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer r.Close()
++	data := make([]byte, r.Size())
++	if _, err := r.ReadAt(context.Background(), data, 0); err != nil {
++		t.Fatal(err)
++	}
++	var b transcriptBundle
++	if err := json.Unmarshal(data, &b); err != nil {
++		t.Fatal(err)
++	}
++	if b.Version != 1 || len(b.Sessions) != 1 {
++		t.Fatalf("invalid bundle: %s", data)
++	}
++	text := string(data)
++	for _, e := range b.Sessions[0].Events {
++		for _, bl := range e.Blocks {
++			text += "\n" + bl.Text
++		}
++	}
++	return b, text
++}
++
++func TestTranscriptCapturesHistoricalPromptsAndReferences(t *testing.T) {
++	srv, _ := sseServer(t, `data: {"choices":[{"delta":{"content":"recorded answer"}}]}`, `data: [DONE]`)
++	s := NewSession()
++	s.SetPatchMode(true)
++	_, _ = s.AddContextFile("gone.txt", []byte("PRIVATE LOCAL FILE BODY"))
++	cfg := Config{BaseURL: srv.URL, APIKey: "SECRET API KEY", System: "original base prompt", Model: "original-model"}
++	if err := s.Ask(context.Background(), cfg, "original question"); err != nil {
++		t.Fatal(err)
++	}
++	if err := NewVFS(s).Remove(context.Background(), "/ctx/gone.txt"); err != nil {
++		t.Fatal(err)
++	}
++	s.SetPatchMode(false)
++	s.SetStatus(Status{Model: "later-model", KeySource: "SECRET API KEY"})
++	b, text := exportTranscript(t, s)
++	for _, want := range []string{"original base prompt", PatchModePrompt, "ctx/gone.txt", "original question", "recorded answer", "original-model"} {
++		if !strings.Contains(text, want) {
++			t.Errorf("missing %q", want)
++		}
++	}
++	for _, forbidden := range []string{"PRIVATE LOCAL FILE BODY", "SECRET API KEY", "later-model"} {
++		if strings.Contains(text, forbidden) {
++			t.Errorf("leaked %q", forbidden)
++		}
++	}
++	var roles []string
++	for _, e := range b.Sessions[0].Events {
++		if e.Role == "user" || e.Role == "assistant" {
++			roles = append(roles, e.Role)
++		}
++	}
++	if strings.Join(roles, ",") != "user,assistant" {
++		t.Fatalf("message order %v", roles)
++	}
++	if strings.Contains(s.Pack(), "agendrain") {
++		t.Fatal("export was packed into context")
++	}
++}
++
++func TestTranscriptFailedRequestsPersistAndReset(t *testing.T) {
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "no access", http.StatusUnauthorized) }))
++	defer srv.Close()
++	s := NewSession()
++	store := filepath.Join(t.TempDir(), "dialog.json")
++	if err := s.SetStorePath(store); err != nil {
++		t.Fatal(err)
++	}
++	if err := s.Ask(context.Background(), Config{BaseURL: srv.URL, APIKey: "k", Model: "m", System: "failed prompt"}, "failed question"); err == nil {
++		t.Fatal("expected failure")
++	}
++	restored := NewSession()
++	if err := restored.SetStorePath(store); err != nil {
++		t.Fatal(err)
++	}
++	_, text := exportTranscript(t, restored)
++	for _, want := range []string{"failed prompt", "failed question", "failed"} {
++		if !strings.Contains(text, want) {
++			t.Errorf("missing %q", want)
++		}
++	}
++	restored.Reset(false)
++	_, text = exportTranscript(t, restored)
++	if strings.Contains(text, "failed question") {
++		t.Fatal("reset retained request history")
++	}
++}
++
++func TestTranscriptIsListedAndReadOnly(t *testing.T) {
++	v := NewVFS(NewSession())
++	ctx := context.Background()
++	listed := false
++	if err := v.ReadDir(ctx, "/", func(items []vfs.VFSItem) {
++		for _, item := range items {
++			if item.Name == "agendrain.json" {
++				listed = true
++			}
++		}
++	}); err != nil {
++		t.Fatal(err)
++	}
++	if !listed {
++		t.Fatal("export not listed")
++	}
++	if _, err := v.Stat(ctx, "ai://agendrain.json"); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := v.Create(ctx, "ai://agendrain.json"); !errors.Is(err, os.ErrPermission) {
++		t.Fatalf("Create error %v", err)
++	}
++	if err := v.MkDir(ctx, "ai://agendrain.json"); !errors.Is(err, os.ErrPermission) {
++		t.Fatalf("MkDir error %v", err)
++	}
++	if err := v.Remove(ctx, "ai://agendrain.json"); !errors.Is(err, os.ErrPermission) {
++		t.Fatalf("Remove error %v", err)
++	}
++	if err := v.Rename(ctx, "ai://agendrain.json", "/ctx/leak"); !errors.Is(err, os.ErrPermission) {
++		t.Fatalf("Rename error %v", err)
++	}
++}
++
++func TestTranscriptLargeExportDoesNotUseContextBudget(t *testing.T) {
++	s := NewSession()
++	large := strings.Repeat("x", maxFileBytes+1)
++	s.Note("assistant", large)
++	_, text := exportTranscript(t, s)
++	if !strings.Contains(text, large) {
++		t.Fatal("large export lost dialog text")
++	}
++	if _, exists := s.tree.stat(transcriptFile); exists {
++		t.Fatal("export occupies bounded context tree")
++	}
++}
++
++func TestTranscriptOldDialogWarnsWithoutInventingInstructions(t *testing.T) {
++	s := NewSession()
++	s.Note("user", "legacy question")
++	_, text := exportTranscript(t, s)
++	if !strings.Contains(text, "cannot be reconstructed") {
++		t.Fatal("missing historical instruction warning")
++	}
++	if strings.Contains(text, DefaultSystemPrompt) {
++		t.Fatal("invented a historical system prompt")
++	}
++}
+diff --git a/internal/vtvibe/vfs.go b/internal/vtvibe/vfs.go
+index c08b2fca..8235a443 100644
+--- a/internal/vtvibe/vfs.go
++++ b/internal/vtvibe/vfs.go
+@@ -79,7 +79,10 @@ func (v *AIVFS) ReadDir(ctx context.Context, p string, onChunk func([]vfs.VFSIte
+ 	}
+ 	children := v.s.tree.list(target)
+ 	v.s.treeMu.RUnlock()
+-	items := make([]vfs.VFSItem, 0, len(children))
++	items := make([]vfs.VFSItem, 0, len(children)+1)
++	if target == "/" {
++		items = append(items, transcriptItem(v.s.transcript()))
++	}
+ 	for _, c := range children {
+ 		items = append(items, toItem(c))
+ 	}
+@@ -92,6 +95,9 @@ func (v *AIVFS) ReadDir(ctx context.Context, p string, onChunk func([]vfs.VFSIte
+ func (v *AIVFS) Stat(ctx context.Context, p string) (vfs.VFSItem, error) {
+ 	v.s.refresh()
+ 	target := v.normalize(p)
++	if target == transcriptFile {
++		return transcriptItem(v.s.transcript()), ctx.Err()
++	}
+ 	v.s.treeMu.RLock()
+ 	defer v.s.treeMu.RUnlock()
+ 	n, ok := v.s.tree.stat(target)
+@@ -153,6 +159,9 @@ func writable(p string) bool {
+ 
+ func (v *AIVFS) MkDir(ctx context.Context, p string) error {
+ 	target := v.normalize(p)
++	if target == transcriptFile {
++		return os.ErrPermission
++	}
+ 	if !writable(target) {
+ 		if strings.HasPrefix(target, chatDir) || target == "/" || !strings.Contains(strings.TrimPrefix(target, "/"), "/") {
+ 			base := path.Base(target)
+@@ -206,6 +215,12 @@ func (v *AIVFS) Search(ctx context.Context, p string, pattern string) (chan int6
+ func (v *AIVFS) Open(ctx context.Context, p string) (vfs.ReadAtCloser, error) {
+ 	v.s.refresh()
+ 	target := v.normalize(p)
++	if target == transcriptFile {
++		if err := ctx.Err(); err != nil {
++			return nil, err
++		}
++		return &memReader{data: v.s.transcript()}, nil
++	}
+ 	v.s.treeMu.RLock()
+ 	defer v.s.treeMu.RUnlock()
+ 	data, ok := v.s.tree.readFile(target)
+@@ -224,6 +239,9 @@ func (v *AIVFS) Open(ctx context.Context, p string) (vfs.ReadAtCloser, error) {
+ 
+ func (v *AIVFS) Create(ctx context.Context, p string) (io.WriteCloser, error) {
+ 	target := v.normalize(p)
++	if target == transcriptFile {
++		return nil, os.ErrPermission
++	}
+ 	if !writable(target) {
+ 		if strings.HasPrefix(target, chatDir) || target == "/" || !strings.Contains(strings.TrimPrefix(target, "/"), "/") {
+ 			base := path.Base(target)
+@@ -322,3 +340,7 @@ func (s *Session) refresh() {
+ 	defer s.mu.Unlock()
+ 	s.writeSessionFile()
+ }
++
++func transcriptItem(data []byte) vfs.VFSItem {
++	return vfs.VFSItem{Name: strings.TrimPrefix(transcriptFile, "/"), Size: int64(len(data)), SizeKnown: true, UnixMode: 0444}
++}
