@@ -28,6 +28,15 @@ jobs:
       - name: Cross compile without CGO
         shell: bash
         run: |
+          mkdir -p dist
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
-            GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 go build -o /tmp/agendrain-${target%/*}-${target#*/} ./cmd/agendrain
+            suffix=""
+            if [ "${target%/*}" = windows ]; then suffix=".exe"; fi
+            GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${GITHUB_SHA}" -o dist/agendrain-${target%/*}-${target#*/}${suffix} ./cmd/agendrain
           done
+          sha256sum dist/agendrain-* > dist/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agendrain-${{ github.sha }}
+          path: dist/
+          retention-days: 14
