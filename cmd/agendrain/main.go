@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 
@@ -32,7 +33,7 @@ Usage:
   agendrain list   --source CLIENT [--input PATH]
   agendrain export --source CLIENT [--input PATH] --session ID --output handoff.zip
 
-Clients: codex, claude (Claude Code), claude-desktop, opencode, cursor,
+Clients: codex, claude (Claude Code), claude-desktop, opencode, cursor, cursor-agent,
          vtvibe, agendrain (previous portable export), auto
 
 Export defaults to a compressed ZIP with conversation.md, manifest.json and
@@ -71,6 +72,18 @@ func loadInput(source, input, id string) (*drain.Bundle, error) {
 			}
 		}
 	}
+	type discoveredStore struct {
+		bundle        *drain.Bundle
+		nativeDesktop bool
+	}
+	var stores []discoveredStore
+	claudeSource := source == "claude" || source == "claude-code" || source == "claude-desktop"
+	sharedClaudePaths := map[string]bool{}
+	if claudeSource {
+		for _, path := range drain.Discover("claude") {
+			sharedClaudePaths[filepath.Clean(path)] = true
+		}
+	}
 	for _, path := range candidates {
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			continue
@@ -86,7 +99,39 @@ func loadInput(source, input, id string) (*drain.Bundle, error) {
 			}
 			continue
 		}
+		stores = append(stores, discoveredStore{part, source == "claude-desktop" && !sharedClaudePaths[filepath.Clean(path)]})
+	}
+	// Desktop's local agent also writes to Claude Code's projects directory.
+	// Native Desktop stores and recorded scratch workspaces establish provenance;
+	// descendants inherit it even when their records omit the working directory.
+	desktopSessions := map[string]bool{}
+	if claudeSource {
+		for _, store := range stores {
+			for _, session := range store.bundle.Sessions {
+				cwd := strings.ToLower(strings.ReplaceAll(session.CWD, `\`, "/"))
+				if store.nativeDesktop || strings.Contains(cwd, "/claude/scratch-workspaces/") {
+					desktopSessions[session.ID] = true
+				}
+			}
+		}
+		for changed := true; changed; {
+			changed = false
+			for _, store := range stores {
+				for _, session := range store.bundle.Sessions {
+					if !desktopSessions[session.ID] && session.ParentID != "" && desktopSessions[session.ParentID] {
+						desktopSessions[session.ID] = true
+						changed = true
+					}
+				}
+			}
+		}
+	}
+	for _, store := range stores {
+		part := store.bundle
 		for _, s := range part.Sessions {
+			if claudeSource && desktopSessions[s.ID] != (source == "claude-desktop") {
+				continue
+			}
 			if old, exists := seen[s.ID]; exists {
 				if !reflect.DeepEqual(old, s) {
 					return nil, fmt.Errorf("conflicting session %q in discovered stores; select an explicit --input", s.ID)
@@ -140,7 +185,7 @@ func run(args []string, out, stderr io.Writer) int {
 		return 0
 	}
 	if args[0] == "sources" {
-		for _, source := range []string{"codex", "claude", "claude-desktop", "opencode", "cursor", "vtvibe"} {
+		for _, source := range []string{"codex", "claude", "claude-desktop", "opencode", "cursor", "cursor-agent", "vtvibe"} {
 			fmt.Fprintln(out, source+":")
 			for _, p := range drain.Discover(source) {
 				mark := "not found"

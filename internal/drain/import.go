@@ -151,6 +151,8 @@ func Load(source, input string) (*Bundle, error) {
 		err = b.opencode(input)
 	case "cursor":
 		err = b.cursor(input)
+	case "cursor-agent":
+		err = b.cursorAgent(input)
 	case "vtvibe":
 		err = b.vtvibe(input)
 	case "agendrain":
@@ -183,7 +185,7 @@ func detect(input string) (string, error) {
 		return "", err
 	}
 	if info.IsDir() {
-		for _, p := range []struct{ path, source string }{{"chat", "vtvibe"}, {"opencode.db", "opencode"}, {"storage/session", "opencode"}, {"globalStorage/state.vscdb", "cursor"}} {
+		for _, p := range []struct{ path, source string }{{"chat", "vtvibe"}, {"opencode.db", "opencode"}, {"storage/session", "opencode"}, {"globalStorage/state.vscdb", "cursor"}, {"store.db", "cursor-agent"}} {
 			if _, e := os.Stat(filepath.Join(input, p.path)); e == nil {
 				return p.source, nil
 			}
@@ -223,6 +225,9 @@ func detect(input string) (string, error) {
 		}
 		if tableExists(db, "session") || tableExists(db, "session_v2") {
 			return "opencode", nil
+		}
+		if tableExists(db, "blobs") && tableExists(db, "meta") {
+			return "cursor-agent", nil
 		}
 	}
 	raw, err := readLimited(input)
@@ -610,6 +615,8 @@ func Discover(source string) []string {
 		return []string{filepath.Join(data, "opencode", "opencode.db"), filepath.Join(data, "opencode", "storage")}
 	case "cursor":
 		return []string{filepath.Join(config, "Cursor", "User", "globalStorage", "state.vscdb"), filepath.Join(config, "Cursor", "User", "workspaceStorage")}
+	case "cursor-agent":
+		return cursorAgentPaths()
 	case "claude-desktop":
 		return []string{filepath.Join(config, "Claude", "local-agent-mode-sessions"), filepath.Join(claude, "projects")}
 	case "vtvibe":

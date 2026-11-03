@@ -125,7 +125,7 @@ func TestCLIClaudeDesktopSkipsEmptyDiscoveredStore(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(config, "Claude", "local-agent-mode-sessions"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	cliPut(t, filepath.Join(d, "claude", "projects", "project", "p.jsonl"), `{"type":"user","sessionId":"p","message":{"role":"user","content":"Continue the local work"}}`+"\n")
+	cliPut(t, filepath.Join(d, "claude", "projects", "project", "p.jsonl"), `{"type":"user","sessionId":"p","cwd":"/home/example/.config/Claude/scratch-workspaces/project","message":{"role":"user","content":"Continue the local work"}}`+"\n")
 	var out, stderr bytes.Buffer
 	if code := run([]string{"list", "--source", "claude-desktop"}, &out, &stderr); code != 0 || !strings.Contains(out.String(), "p\tclaude-desktop") {
 		t.Fatalf("%d %s %s", code, out.String(), stderr.String())

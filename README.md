@@ -12,7 +12,7 @@ Choose **Claude Code → your project/conversation → ZIP → optional checkbox
 
 Export recorded AI agent conversations into a portable handoff that a person or another agent can read and continue. Written in Go; intended for Linux, macOS, and Windows. SQLite support does not require a C compiler.
 
-The current scope is **local applications and offline input files**: Codex CLI and Desktop, Claude Code, Claude Desktop's available local agent logs or a supplied data export, OpenCode, Cursor, and vtvibe from [unxed/f4](https://github.com/unxed/f4). See [source coverage and limitations](docs/SOURCES.md). Web session APIs and sandbox access are [future ideas](docs/IDEAS.md).
+The current scope is **local applications and offline input files**: Codex CLI and Desktop, Claude Code, Claude Desktop's available local agent logs or a supplied data export, OpenCode, Cursor IDE, experimental Cursor Agent CLI, and vtvibe from [unxed/f4](https://github.com/unxed/f4). See [source coverage and limitations](docs/SOURCES.md). Web session APIs and sandbox access are [future ideas](docs/IDEAS.md).
 
 agendrain keeps recorded messages, available instructions and context, tool calls and results, plaintext reasoning where recorded, attachments, and discoverable subagent sessions. It cannot recover context that the source never saved. **By default it does not open project files mentioned in the conversation or download remote attachments.** File contents already present in recorded tool results remain part of the conversation.
 
@@ -44,6 +44,7 @@ agendrain list --source codex --input /path/to/.codex/archived_sessions --json
 agendrain export --source claude --input /path/to/.claude/projects --session SESSION_ID --output handoff.zip
 agendrain export --source opencode --input /path/to/opencode.db --session SESSION_ID --output handoff.zip
 agendrain export --source cursor --input /path/to/Cursor/User --session SESSION_ID --output handoff.zip
+agendrain export --source cursor-agent --input /path/to/.cursor/chats --session SESSION_ID --output handoff.zip
 agendrain export --source vtvibe --input /path/to/f4/ai/dialog.json --output handoff.zip
 ```
 

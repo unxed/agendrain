@@ -25,6 +25,8 @@ Use `--source claude` or `claude-code`. Discovery uses `$CLAUDE_CONFIG_DIR/proje
 
 Current `<session-id>/subagents/agent-*.jsonl` and legacy neighboring `agent-*.jsonl` layouts are inspected for a selected transcript. Child relationships are retained when recorded. To maximize child coverage, supply the enclosing project store and select the root ID. Missing logs cannot be recovered.
 
+Anonymous logs nested in different directories receive path-scoped fallback identities instead of being merged by filename. Native resumed or forked UUID-named logs retain their copied earlier history under the current filename identity, with lineage metadata. Ambiguous mixed identities without a matching native UUID are rejected. Matching explicit session segments still merge and deduplicate identical events.
+
 ## Claude Desktop
 
 `--source claude-desktop` accepts two different kinds of available input:
@@ -58,6 +60,16 @@ Use `--source cursor` with `state.vscdb` or a directory containing such database
 The importer reads available `cursorDiskKV` or `ItemTable` JSON records: `composerData`, bubbles, conversation headers/maps, request context, explicit rules/system prompts, tool data, and legacy chat/prompt records. Header order is preferred; missing headers or unindexed bubbles produce ordering warnings. Parent composer IDs and recorded subagent references can link available child conversations.
 
 Cursor's private storage is version-dependent. **Binary `agentKv` state is not decoded.** If present, a warning makes clear that only readable composer/bubble/request context is exported. Therefore this source cannot guarantee complete coverage of recent agent sessions. Available readable context is retained even when binary state exists. No undocumented binary format is presented as supported.
+
+## Cursor Agent CLI (experimental)
+
+Use `--source cursor-agent` for the CLI's separate local `store.db` format. The wizard lists **Cursor Agent (console)** separately from the IDE. Discovery checks `chats` and `acp-sessions` below `$CURSOR_CONFIG_DIR`, then `$XDG_CONFIG_HOME/cursor`, or `~/.cursor` when neither override is set. An explicit input can be a database, a session directory, or an enclosing native store. The official [CLI configuration reference](https://prod.cursor.com/docs/cli/reference/configuration) documents the configuration override; the private storage schema was checked against the installed official CLI build `2026.10.01-e373342`.
+
+The importer follows reachable SHA-256 blob references from the current root in a read-only SQLite snapshot. It decodes recorded prompt JSON, user and assistant messages, plaintext thinking, shell turns, available selected images and rule instructions, hook context, and inline or referenced subagent states. It checks blob integrity and applies byte, record, field and nesting limits. Unreachable blobs are not scanned for chat text.
+
+Tool-specific protobuf records and some other typed state remain **opaque attachments with type/checksum metadata and warnings**, rather than being presented as fully decoded context. Normal ZIPs retain those bytes; Markdown needs `--base64` to retain them. Model-name removal does not inspect opaque binary attachments. This reader does not decode Cursor IDE's `agentKv`.
+
+Encryption/authentication metadata and cached project-file snapshots are excluded. Selected-file paths remain references; explicit file options can include current local contents under an allowed root. The importer never opens referenced project paths on its own. This experimental schema is version-specific; unsupported variants fail or produce completeness warnings.
 
 ## vtvibe in f4
 
