@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -98,7 +99,7 @@ func wizardSessionTime(s drain.Session) time.Time {
 func wizardSessionChoices(b *drain.Bundle) []wizardChoice {
 	var sessions []drain.Session
 	for _, session := range b.Sessions {
-		if session.ParentID == "" {
+		if session.ParentID == "" && (session.Source == "" || session.Source == "codex" || wizardHasConversation(session)) {
 			sessions = append(sessions, session)
 		}
 	}
@@ -117,8 +118,8 @@ func wizardSessionChoices(b *drain.Bundle) []wizardChoice {
 				continue
 			}
 			for _, block := range event.Blocks {
-				if block.Type == "text" && strings.TrimSpace(block.Text) != "" {
-					snippet = wizardShort(block.Text, 120)
+				if text := wizardBlockText(block); strings.TrimSpace(text) != "" {
+					snippet = wizardShort(text, 120)
 					break
 				}
 			}
@@ -140,6 +141,12 @@ func wizardSessionChoices(b *drain.Bundle) []wizardChoice {
 			title = uiText("Без названия", "Untitled")
 		}
 		var detail []string
+		if session.Title != "" {
+			detail = append(detail, session.Title)
+		}
+		if snippet != "" && snippet != title {
+			detail = append(detail, snippet)
+		}
 		if session.CWD != "" {
 			detail = append(detail, session.CWD)
 		}
@@ -150,9 +157,84 @@ func wizardSessionChoices(b *drain.Bundle) []wizardChoice {
 			detail = append(detail, snippet)
 		}
 		detail = append(detail, "ID: "+session.ID)
-		choices = append(choices, wizardChoice{ID: session.ID, Title: wizardShort(title, 140), Detail: strings.Join(detail, " · ")})
+		when := uiText("дата ?", "date ?")
+		if t := wizardSessionTime(session); !t.IsZero() {
+			when = t.UTC().Format("2006-01-02 15:04")
+		}
+		project := wizardProject(session.CWD)
+		if strings.Contains(strings.ToLower(strings.ReplaceAll(session.CWD, "\\", "/")), "/claude/scratch-workspaces/") {
+			project = "Desktop"
+		}
+		if project == "" {
+			project = uiText("без проекта", "no project")
+		}
+		row := when + " · [" + wizardShort(project, 12) + "] " + wizardShort(title, 34)
+		choices = append(choices, wizardChoice{ID: session.ID, Title: row, Detail: strings.Join(detail, " · ")})
+	}
+	counts := map[string]int{}
+	for _, choice := range choices {
+		counts[choice.Title]++
+	}
+	for i := range choices {
+		if counts[choices[i].Title] > 1 {
+			choices[i].Title = wizardShort(choices[i].ID, 8) + fmt.Sprintf(" #%d · ", i+1) + choices[i].Title
+		}
 	}
 	return choices
+}
+
+func wizardBlockText(block drain.Block) string {
+	if block.Type == "text" {
+		return block.Text
+	}
+	if block.Type != "context" {
+		return ""
+	}
+	var v any
+	if json.Unmarshal([]byte(block.Text), &v) != nil {
+		return ""
+	}
+	var extract func(any) string
+	extract = func(v any) string {
+		switch x := v.(type) {
+		case string:
+			return x
+		case []any:
+			for _, item := range x {
+				if s := extract(item); s != "" {
+					return s
+				}
+			}
+		case map[string]any:
+			for _, key := range []string{"text", "content", "message"} {
+				if s := extract(x[key]); s != "" {
+					return s
+				}
+			}
+		}
+		return ""
+	}
+	return extract(v)
+}
+
+func wizardHasConversation(session drain.Session) bool {
+	for _, event := range session.Events {
+		if event.Role != "user" && event.Role != "assistant" {
+			continue
+		}
+		for _, block := range event.Blocks {
+			if strings.TrimSpace(wizardBlockText(block)) != "" {
+				return true
+			}
+			if (block.Type == "image" || block.Type == "file") && (block.Asset != "" || block.Path != "") {
+				return true
+			}
+			if (block.Type == "reasoning" || block.Type == "tool_call") && strings.TrimSpace(block.Text) != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func wizardSelect(ui wizardUI, title, help string, choices []wizardChoice) (wizardChoice, error) {
