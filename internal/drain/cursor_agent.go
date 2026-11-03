@@ -681,10 +681,20 @@ func cursorAgentSessionCWD(dir string) string {
 	var meta struct {
 		CWD string `json:"cwd"`
 	}
-	if json.Unmarshal(raw, &meta) != nil || !filepath.IsAbs(meta.CWD) {
+	if json.Unmarshal(raw, &meta) != nil || !recordedAbsPath(meta.CWD) {
 		return ""
 	}
 	return meta.CWD
+}
+
+// recordedAbsPath accepts absolute paths of either OS family, because a copied
+// store may come from a machine other than the one running the export.
+func recordedAbsPath(p string) bool {
+	if strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\\`) || filepath.IsAbs(p) {
+		return true
+	}
+	return len(p) >= 3 && p[1] == ':' && (p[2] == '\\' || p[2] == '/') &&
+		(p[0]|0x20) >= 'a' && (p[0]|0x20) <= 'z'
 }
 
 func (b *Bundle) cursorAgent(input string) error {

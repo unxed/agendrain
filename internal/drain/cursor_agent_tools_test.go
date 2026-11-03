@@ -250,6 +250,12 @@ func TestCursorAgentSessionCWDFromMetaJSON(t *testing.T) {
 	if b := loadCA(t, f.path); b.Sessions[0].CWD != "/real/cwd" {
 		t.Fatalf("meta.json cwd not used: %q", b.Sessions[0].CWD)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "meta.json"), []byte(`{"cwd":"C:\\work\\repo"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if b := loadCA(t, f.path); b.Sessions[0].CWD != `C:\work\repo` {
+		t.Fatalf("store copied from Windows lost its cwd: %q", b.Sessions[0].CWD)
+	}
 	if err := os.WriteFile(filepath.Join(dir, "meta.json"), []byte(`{"cwd":"relative/path"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
