@@ -2,7 +2,8 @@ package drain
 
 // This is an independent, bounded reader for Cursor Agent's local SQLite store.
 // Field numbers were checked against the generated agent.v1 descriptors in the
-// official 2026.10.01-e373342 CLI. This does not describe Cursor IDE agentKv.
+// official 2026.10.01-e373342 CLI. Cursor IDE agentKv storage reuses these
+// records through cursor_ide_kv.go.
 
 import (
 	"crypto/sha256"
@@ -71,6 +72,11 @@ type cursorAgentReader struct {
 	records int
 	fields  int
 	active  map[string]bool
+	// fetch replaces the CLI blobs table for Cursor IDE agentKv stores; the
+	// returned bytes are still checked against their SHA-256 identity.
+	fetch func(key string, budget int64) ([]byte, error)
+	// turnSpans, when set, records each session's decoded turn event ranges.
+	turnSpans map[string][][2]int
 }
 
 func (r *cursorAgentReader) proto(p []byte) (cursorAgentProto, error) {
@@ -129,6 +135,13 @@ func (r *cursorAgentReader) blob(id []byte) ([]byte, error) {
 	key := hex.EncodeToString(id)
 	if data, exists := r.cache[key]; exists {
 		return data, nil
+	}
+	if r.fetch != nil {
+		data, err := r.fetch(key, maxSourceBytes-r.read)
+		if err != nil {
+			return nil, err
+		}
+		return r.verified(key, data)
 	}
 	rows, err := r.q.Query("SELECT length(data) FROM blobs WHERE id=?", key)
 	if err != nil {
@@ -495,8 +508,12 @@ func (r *cursorAgentReader) state(data []byte, s Session, depth int) error {
 		}
 	}
 	for _, ref := range p[8] {
+		start := len(s.Events)
 		if err := r.turn(&s, ref.data); err != nil {
 			return err
+		}
+		if r.turnSpans != nil {
+			r.turnSpans[s.ID] = append(r.turnSpans[s.ID], [2]int{start, len(s.Events)})
 		}
 	}
 	for _, text := range p[35] {

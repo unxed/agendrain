@@ -399,6 +399,7 @@ func (b *Bundle) cursor(input string) error {
 		return err
 	}
 	seen := map[string]bool{}
+	var kvReader *cursorAgentReader
 	for _, p := range ps {
 		err = snapshot(p, func(q *sql.Tx) error {
 			table := "cursorDiskKV"
@@ -412,6 +413,12 @@ func (b *Bundle) cursor(input string) error {
 			if err != nil {
 				return err
 			}
+			kv := &cursorIDEKV{b: b, q: q, known: map[string]bool{}, reader: kvReader}
+			for _, row := range rows {
+				kv.known[strings.TrimPrefix(str(row["key"]), "composerData:")] = true
+			}
+			hosts := cursorHostSessions(p)
+			usedHosts := map[string]bool{}
 			for _, row := range rows {
 				v, err := decode([]byte(str(row["value"])))
 				if err != nil {
@@ -504,7 +511,23 @@ func (b *Bundle) cursor(input string) error {
 				for _, c := range ctx {
 					s.Events = append(s.Events, Event{Role: "system", Kind: "request_context", ID: str(c["key"]), Blocks: []Block{{Type: "context", Text: str(c["value"])}}})
 				}
+				var children []Session
+				if table == "cursorDiskKV" {
+					bubbleIDs := map[string]bool{}
+					for bid := range bubbles {
+						bubbleIDs[bid] = true
+					}
+					usedHosts[id] = hosts[id] != ""
+					children = kv.merge(&s, m, hosts[id], bubbleIDs, len(bubbles) > 0 || len(arr(m["conversation"])) > 0)
+				}
 				b.Sessions = append(b.Sessions, s)
+				b.Sessions = append(b.Sessions, children...)
+			}
+			for _, hs := range kv.hostOnly(hosts, usedHosts) {
+				if !seen[hs.ID] {
+					seen[hs.ID] = true
+					b.Sessions = append(b.Sessions, hs)
+				}
 			}
 			legacy, err := records(q, "SELECT key,value FROM "+table+" WHERE key IN ('workbench.panel.aichat.view.aichat.chatdata','aiService.prompts') ORDER BY key")
 			if err != nil {
@@ -513,14 +536,9 @@ func (b *Bundle) cursor(input string) error {
 			for _, row := range legacy {
 				b.Sessions = append(b.Sessions, Session{ID: filepath.Base(filepath.Dir(p)) + ":" + str(row["key"]), Source: "cursor", Events: []Event{{Role: "system", Kind: "legacy_chat", Blocks: []Block{{Type: "context", Text: str(row["value"])}}}}})
 			}
+			kvReader = kv.reader
 			if tableExists(q, "cursorDiskKV") {
-				r, e := records(q, "SELECT key FROM cursorDiskKV WHERE key LIKE 'agentKv:%' LIMIT 1")
-				if e != nil {
-					return e
-				}
-				if len(r) > 0 {
-					b.warn("Cursor agentKv binary state exists; only readable composer/bubble/request context is exported")
-				}
+				return kv.extras()
 			}
 			return nil
 		})
