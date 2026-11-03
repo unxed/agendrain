@@ -48,5 +48,8 @@ exports larger than the context-file limit, and truthful legacy warnings.
 Runtime verification runs in the repository's `f4 transcript patch` GitHub
 workflow with the pinned f4 commit and Go 1.26.6. The hosted run
 [41547214882](https://github.com/unxed/agendrain/actions/runs/41547214882)
-passed `go test -race ./internal/vtvibe`; the workflow repeats this validation
-for subsequent commits. No local f4 build was run.
+passed `go test -race ./internal/vtvibe`. The workflow repeats when the patch or
+its workflow changes, and can be dispatched manually. Before tagging a release,
+dispatch both CI and this workflow for that exact commit if either check is
+missing. Documentation-only commits do not rebuild binaries. No local f4 build
+was run.

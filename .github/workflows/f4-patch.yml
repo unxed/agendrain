@@ -1,6 +1,15 @@
 name: f4 transcript patch
 
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches: ['**']
+    paths: ['contrib/f4-vtvibe-transcript.patch', '.github/workflows/f4-patch.yml']
+  pull_request:
+    paths: ['contrib/f4-vtvibe-transcript.patch', '.github/workflows/f4-patch.yml']
+  workflow_dispatch:
+concurrency:
+  group: f4-patch-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

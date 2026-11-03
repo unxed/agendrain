@@ -1,5 +1,14 @@
 name: CI
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches: ['**']
+    paths: ['**.go', 'go.mod', 'go.sum', '.github/workflows/**']
+  pull_request:
+    paths: ['**.go', 'go.mod', 'go.sum', '.github/workflows/**']
+  workflow_dispatch:
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 env:

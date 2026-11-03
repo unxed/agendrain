@@ -24,6 +24,7 @@ jobs:
             result=$(gh run list --workflow "$workflow" --commit "$GITHUB_SHA" --json databaseId,status,conclusion --jq '[.[] | select(.status == "completed" and .conclusion == "success")][0].databaseId')
             if [ -z "$result" ] || [ "$result" = null ]; then
               echo "No successful $workflow run for $GITHUB_SHA. Tag only a fully validated main commit."
+              echo "Use Run workflow for CI and f4 transcript patch on the release commit before tagging."
               exit 1
             fi
             if [ "$workflow" = ci.yml ]; then
