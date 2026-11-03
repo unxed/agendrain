@@ -84,7 +84,47 @@ func wizardProject(cwd string) string {
 }
 
 func wizardQuote(text string) string {
-	return uiText("«", "“") + text + uiText("»", "”")
+	return uiText("«", "“") + wizardUnquote(text) + uiText("»", "”")
+}
+
+// wizardUnquote makes a first request readable as a row label: a recorded
+// slash command becomes "/name args", and one pair of quotes that the user
+// typed around the whole request is dropped so the wizard's own quotes are not
+// doubled. A shortened request keeps only its opening quote, which is dropped
+// too.
+func wizardUnquote(text string) string {
+	text = strings.TrimSpace(text)
+	if name, ok := wizardTag(text, "command-name"); ok && strings.HasPrefix(text, "<command-") {
+		args, _ := wizardTag(text, "command-args")
+		return strings.TrimSpace(name + " " + strings.Join(strings.Fields(args), " "))
+	}
+	for _, q := range [][2]string{{`"`, `"`}, {"«", "»"}, {"“", "”"}, {"'", "'"}} {
+		if !strings.HasPrefix(text, q[0]) {
+			continue
+		}
+		inner := strings.TrimPrefix(text, q[0])
+		if strings.HasSuffix(inner, "…") && !strings.Contains(inner, q[1]) {
+			return inner
+		}
+		inner = strings.TrimSuffix(inner, q[1])
+		if len(inner)+len(q[0])+len(q[1]) == len(text) && !strings.Contains(inner, q[0]) && !strings.Contains(inner, q[1]) {
+			return inner
+		}
+	}
+	return text
+}
+
+func wizardTag(text, tag string) (string, bool) {
+	start := strings.Index(text, "<"+tag+">")
+	if start < 0 {
+		return "", false
+	}
+	rest := text[start+len(tag)+2:]
+	end := strings.Index(rest, "</"+tag+">")
+	if end < 0 {
+		return strings.TrimSpace(rest), true
+	}
+	return strings.TrimSpace(rest[:end]), true
 }
 
 // wizardRequests spells the request count in plain words with correct
@@ -242,7 +282,7 @@ func wizardSessionChoices(b *drain.Bundle) []wizardChoice {
 			title = untitled
 			if snippet != "" {
 				prefix := untitled + ": "
-				title = prefix + wizardQuote(wizardShort(snippet, 32))
+				title = prefix + wizardQuote(wizardShort(wizardUnquote(snippet), 32))
 			}
 		} else {
 			title = wizardShort(title, 44)
@@ -254,7 +294,7 @@ func wizardSessionChoices(b *drain.Bundle) []wizardChoice {
 			detail = append(detail, uiText("Название: нет", "Title: none"))
 		}
 		if snippet != "" {
-			detail = append(detail, uiText("Первый запрос: ", "First request: ")+wizardQuote(wizardShort(snippet, 44)))
+			detail = append(detail, uiText("Первый запрос: ", "First request: ")+wizardQuote(wizardShort(wizardUnquote(snippet), 44)))
 		}
 		if session.CWD != "" {
 			detail = append(detail, uiText("Папка: ", "Folder: ")+wizardTilde(session.CWD, wizardHome()))

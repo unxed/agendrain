@@ -110,3 +110,24 @@ func TestWizardUntitledRowQuotesFirstRequest(t *testing.T) {
 		t.Fatal(c)
 	}
 }
+
+func TestWizardQuoteDoesNotDoubleQuotes(t *testing.T) {
+	t.Setenv("LC_ALL", "ru_RU.UTF-8")
+	for in, want := range map[string]string{`"Say PONG"`: "«Say PONG»", "«уже»": "«уже»", `"a" b "c"`: `«"a" b "c"»`, "plain": "«plain»"} {
+		if got := wizardQuote(in); got != want {
+			t.Errorf("%q: got %q want %q", in, got, want)
+		}
+	}
+}
+
+func TestWizardUnquoteReadableRequests(t *testing.T) {
+	for in, want := range map[string]string{
+		`"Create the file /tmp/x and…`: "Create the file /tmp/x and…",
+		"<command-name>/goal</command-name>\n  <command-message>goal</command-message>\n  <command-args>См. HANDOFF.md</command-args>": "/goal См. HANDOFF.md",
+		"<command-name>/clear</command-name>": "/clear",
+	} {
+		if got := wizardUnquote(in); got != want {
+			t.Errorf("%q: got %q want %q", in, got, want)
+		}
+	}
+}
