@@ -20,5 +20,7 @@ The current scope is extracting recorded conversations from local AI application
   since the Markdown is a second full copy of the content. Not done because
   classifying "technical" records is source-specific and risks hiding user
   wording such as queued messages.
-- Additional Cursor storage generations: decode proprietary binary agentKv
-  records when a verifiable schema and redistributable fixtures are available.
+- Remaining Cursor gaps: verify agentKv decoding against a real recent IDE
+  profile (especially agent host manifest v2 linear layouts), read the chunked
+  composer header log, and decide whether per-message bubble checkpoints or
+  agentKv artifacts should be exportable.

@@ -67,7 +67,20 @@ Use `--source cursor` with `state.vscdb` or a directory containing such database
 
 The importer reads available `cursorDiskKV` or `ItemTable` JSON records: `composerData`, bubbles, conversation headers/maps, request context, explicit rules/system prompts, tool data, and legacy chat/prompt records. Header order is preferred; missing headers or unindexed bubbles produce ordering warnings. Parent composer IDs and recorded subagent references can link available child conversations.
 
-Cursor's private storage is version-dependent. **Binary `agentKv` state is not decoded.** If present, a warning makes clear that only readable composer/bubble/request context is exported. Therefore this source cannot guarantee complete coverage of recent agent sessions. Available readable context is retained even when binary state exists. No undocumented binary format is presented as supported.
+Binary `agentKv` state is decoded (experimental). The storage layout was checked against the official Cursor 3.28.7 Linux .deb (commit 25b52e7d03ebf2d5608914158e119f7992432a30, from `https://downloads.cursor.com/production/25b52e7d03ebf2d5608914158e119f7992432a34/linux/x64/deb/amd64/deb/cursor_3.28.7_amd64.deb` as returned by `https://cursor.com/api/download?platform=linux-x64&releaseTrack=stable`; sha256 `4610c4915aff5ddd2b637e2ff3f48490e258239f4bfa34869b9ab2f0be5f38d0`), files `out/vs/workbench/workbench.desktop.main.js` and `extensions/cursor-agent-host/dist/main.js`.
+
+Layouts read:
+
+- Renderer content-addressed rows `agentKv:blob:<sha256 hex>` in `cursorDiskKV` (SQLite BLOB, or hexadecimal TEXT from older writers), rooted at `composerData.conversationState` ("~"+base64 or hex) or, for pre-v11 composers, the `agentKv:checkpoint:<composerId>` pointer.
+- Agent host session stores `globalStorage/anysphere.cursor-agent-host/sessions/<id>/session.sqlite` next to the global `state.vscdb`, with the `agentHost:sessionManifest` item (manifest v1 structure root; v2 linear layout root plus `agentHost:turns|prompt|archives:<index>` list rows). Host sessions with a matching composer ID are merged into that composer; others are listed separately.
+
+Blobs hold the same agent.v1 records as the Cursor Agent CLI store and are decoded by that reader (same coverage and opaque-attachment behaviour), with SHA-256 integrity checks and the same byte/record/field/nesting limits.
+
+Merging: readable bubbles stay the primary transcript. agentKv turns whose user message ID matches a bubble ID are not repeated; agentKv-only turns are appended with a warning; if no turn ID matches any bubble, agentKv turns are not re-emitted (warning). Recorded prompts are prepended; summaries, todos, state and subagent states are added; subagent states whose ID is an existing composer are not duplicated. A decode failure keeps the readable composer/bubble context and warns.
+
+Not exported (counted in warnings): `agentKv:bubbleCheckpoint:` per-message snapshots and `agentKv:artifact:` files. Unreferenced blobs are not scanned. Composer encryption keys are not exported. An encrypted-blob code path (AES-GCM) exists in the bundle but is not instantiated for local stores; encrypted blobs would fail the checksum and fall back with a warning.
+
+Verification limits: the available real IDE profile (Cursor 1.4.5, September 2025) contains no agentKv rows, so the IDE layouts are verified against the official bundle and synthetic fixtures only. The storage adapter was additionally checked by re-hosting 9 real Cursor Agent CLI stores (4932 events) in all three IDE layouts (inline state, checkpoint+hex blobs, host manifest v1); decoded events matched the CLI reader. The manifest v2 linear layout has no real sample. The chunked composer header log of newer builds is not read (bubble order then falls back as described above).
 
 ## Cursor Agent CLI (experimental)
 
@@ -93,7 +106,7 @@ The shell-parser analysis in `ShellArgs` (`parsing_result`, `simple_commands`) i
 - Summary archives list the blob ids of earlier model-context messages; they are counted but not expanded, because they are JSON copies of turns that are already decoded from the turn list.
 - Binary field values in tool records (for example image bytes) are retained as ZIP assets with a descriptive file block.
 - The side files `prompt_history.json` and `pasted_text.json` are not read.
-- This reader does not decode Cursor IDE's `agentKv`.
+- The Cursor IDE source reuses this record decoder for `agentKv` (see Cursor).
 
 Encryption/authentication metadata and cached project-file snapshots are excluded. Selected-file paths remain references; explicit file options can include current local contents under an allowed root. The importer never opens referenced project paths on its own. This experimental schema is version-specific; unsupported variants fail or produce completeness warnings.
 
