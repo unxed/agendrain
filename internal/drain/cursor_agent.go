@@ -188,7 +188,7 @@ func (r *cursorAgentReader) opaque(s *Session, data []byte, typeName, role, kind
 		{Type: "context", Text: jsonText(meta)},
 		{Type: "file", MIME: mime, Asset: r.b.asset(data), Description: "Recorded " + typeName + "; opaque bytes retained"},
 	}})
-	r.b.warn("Cursor Agent " + typeName + " is retained as an opaque protobuf attachment; tool-specific fields are not decoded (Markdown needs --base64 to include these bytes)")
+	r.b.warn("Cursor Agent " + typeName + " is retained as an opaque attachment; record-specific fields are not decoded (Markdown needs --base64 to include these bytes)")
 }
 
 func (r *cursorAgentReader) prompt(s *Session, id []byte) error {
