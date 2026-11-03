@@ -233,7 +233,7 @@ func run(args []string, out, stderr io.Writer) int {
 					count := len(s.Events)
 					events = &count
 				}
-				lastTime := ""
+				lastTime := s.UpdatedAt
 				for _, e := range s.Events {
 					if e.Time != "" {
 						lastTime = e.Time
@@ -250,7 +250,7 @@ func run(args []string, out, stderr io.Writer) int {
 				if s.Events != nil {
 					count = fmt.Sprintf("%d events", len(s.Events))
 				}
-				lastTime := ""
+				lastTime := s.UpdatedAt
 				for _, e := range s.Events {
 					if e.Time != "" {
 						lastTime = e.Time

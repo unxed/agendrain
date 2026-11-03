@@ -58,6 +58,8 @@ Example with optional fields included:
 
 Optional strings and lists may be absent. Events and blocks are ordered arrays. Sessions retain their imported order; there is no synthetic global merge of parent and subagent timelines. `parent_id` links discoverable child sessions. Event timestamps are source timestamps when available, not a guarantee that all native records had clocks.
 
+An optional session `updated_at` contains recorded activity metadata when available. The wizard uses it to order metadata-only session listings without loading full histories.
+
 Common block types are `text`, `context`, `reasoning`, `tool_call`, `tool_result`, `image`, `file`, and `file_content`. Export transformations can add `reference`, `omitted`, or `image_description`. Importers preserve unfamiliar recorded content as JSON text in context blocks where possible. Consumers should tolerate unfamiliar block types rather than drop them.
 
 `path` records a resource reference; it does not grant permission to open that resource. `asset` refers to bytes included in the bundle through `asset_files`. A reference without an asset may have no available bytes. Importing an agendrain ZIP checks included asset checksums and rejects unsupported format versions, unsafe/duplicate ZIP paths, missing assets, and duplicate session IDs. A standalone manifest can be read only when it needs no accompanying assets; use the ZIP for round trips.

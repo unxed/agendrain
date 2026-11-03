@@ -98,16 +98,14 @@ func codexMetadataTitles(root string) (map[string]string, map[string]string) {
 					hasName = true
 				}
 			}
-			query := "SELECT id,title FROM threads"
+			selectedColumns := "id,title"
 			if hasName {
-				query = "SELECT id,title,name FROM threads"
+				selectedColumns += ",name"
 			}
 			if hasUpdated {
-				query += ",updated_at"
-			} // columns must precede FROM
-			if hasUpdated {
-				query = strings.Replace(query, " FROM threads,updated_at", ",updated_at FROM threads", 1)
+				selectedColumns += ",updated_at"
 			}
+			query := "SELECT " + selectedColumns + " FROM threads"
 			rows, err := records(tx, query)
 			if err != nil {
 				return err
