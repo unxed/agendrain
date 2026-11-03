@@ -72,7 +72,8 @@ func TestCursorAgentReachableRecordedContextAndOpaqueTool(t *testing.T) {
 	prompt := f.blob([]byte(`{"role":"system","content":"Exact recorded system instruction"}`))
 	image := f.blob([]byte{137, 80, 78, 71})
 	selected := caJoin(caBytes(1, caJoin(caBytes(1, image), caText(7, "image/png"))), caBytes(4, caJoin(caText(1, "DO_NOT_EXPORT_LOCAL_FILE"), caText(2, "/repo/private.go"))))
-	user := f.blob(caJoin(caText(1, "Exact user requirement"), caText(2, "u"), caBytes(3, selected)))
+	hook := caBytes(21, caJoin(caText(1, "beforeSubmitPrompt"), caText(2, "Exact mandatory hook instruction")))
+	user := f.blob(caJoin(caText(1, "Exact user requirement"), caText(2, "u"), caBytes(3, selected), hook))
 	answer := f.blob(caBytes(1, caText(1, "Exact assistant decision")))
 	thinking := f.blob(caBytes(3, caText(1, "Recorded thinking")))
 	toolBytes := caJoin(caBytes(1, caText(3, "Recorded shell tool")), caText(57, "call-1"))
@@ -90,7 +91,7 @@ func TestCursorAgentReachableRecordedContextAndOpaqueTool(t *testing.T) {
 	f.meta(root)
 	b := loadCA(t, f.path)
 	s := joined(b)
-	for _, required := range []string{"Exact recorded system instruction", "Exact user requirement", "Exact assistant decision", "Recorded thinking", "git status", "clean output", "recorded stderr", "private.go", "call-1", "agent.v1.ToolCall"} {
+	for _, required := range []string{"Exact recorded system instruction", "Exact user requirement", "Exact assistant decision", "Recorded thinking", "Exact mandatory hook instruction", "beforeSubmitPrompt", "git status", "clean output", "recorded stderr", "private.go", "call-1", "agent.v1.ToolCall"} {
 		if !strings.Contains(s, required) {
 			t.Errorf("missing recorded context %q", required)
 		}
@@ -110,6 +111,9 @@ func TestCursorAgentReachableRecordedContextAndOpaqueTool(t *testing.T) {
 	}
 	if b.Sessions[0].ID != "p" || b.Sessions[0].Title != "Synthetic work" || b.Sessions[0].Source != "cursor-agent" {
 		t.Fatal("wrong whitelisted metadata", b.Sessions[0])
+	}
+	if b.Sessions[0].UpdatedAt == "" {
+		t.Fatal("recorded creation date not available for session selection")
 	}
 	if err := Prepare(b, Options{}); err != nil {
 		t.Fatal(err)

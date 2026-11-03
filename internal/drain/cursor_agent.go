@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -53,6 +54,13 @@ func (p cursorAgentProto) number(field int) uint64 {
 		return 0
 	}
 	return values[len(values)-1].num
+}
+
+func cursorAgentTimestamp(ms uint64) string {
+	if ms == 0 || ms > 1<<63-1 {
+		return ""
+	}
+	return time.UnixMilli(int64(ms)).UTC().Format(time.RFC3339Nano)
 }
 
 type cursorAgentReader struct {
@@ -287,10 +295,11 @@ func (r *cursorAgentReader) user(s *Session, id []byte) error {
 		}
 		text = string(data)
 	}
-	e := Event{ID: p.text(2), Role: "user", Kind: "message", Time: stamp(float64(p.number(25))), Blocks: r.b.blocks(text)}
-	if p.number(25) == 0 {
-		e.Time = ""
+	when := p.number(26)
+	if when == 0 {
+		when = p.number(25)
 	}
+	e := Event{ID: p.text(2), Role: "user", Kind: "message", Time: cursorAgentTimestamp(when), Blocks: r.b.blocks(text)}
 	if context := p.data(3); len(context) > 0 {
 		blocks, err := r.selectedContext(s, context)
 		if err != nil {
@@ -302,6 +311,13 @@ func (r *cursorAgentReader) user(s *Session, id []byte) error {
 		if text := p.text(field); text != "" {
 			e.Blocks = append(e.Blocks, Block{Type: "context", Text: text})
 		}
+	}
+	for _, context := range p[21] {
+		hook, err := r.proto(context.data)
+		if err != nil {
+			return err
+		}
+		e.Blocks = append(e.Blocks, Block{Type: "context", Name: hook.text(1), Text: hook.text(2), Description: "Recorded hook additional context"})
 	}
 	s.Events = append(s.Events, e)
 	return nil
@@ -356,7 +372,15 @@ func (r *cursorAgentReader) turn(s *Session, id []byte) error {
 			if err != nil {
 				return err
 			}
-			e := Event{Role: "assistant", Kind: kind, Blocks: []Block{{Type: "text", Text: message.text(1)}}}
+			started, completed := 2, 3
+			if kind == "reasoning" {
+				started, completed = 3, 4
+			}
+			when := message.number(completed)
+			if when == 0 {
+				when = message.number(started)
+			}
+			e := Event{Role: "assistant", Kind: kind, Time: cursorAgentTimestamp(when), Blocks: []Block{{Type: "text", Text: message.text(1)}}}
 			if kind == "reasoning" {
 				e.Blocks[0].Type = "reasoning"
 			}
@@ -390,6 +414,9 @@ func (r *cursorAgentReader) state(data []byte, s Session, depth int) error {
 	p, err := r.proto(data)
 	if err != nil {
 		return err
+	}
+	if when := cursorAgentTimestamp(p.number(26)); when != "" && s.UpdatedAt == "" {
+		s.UpdatedAt = when
 	}
 	for _, uri := range p[9] {
 		if u, err := url.Parse(string(uri.data)); err == nil && u.Scheme == "file" && s.CWD == "" {
@@ -435,6 +462,12 @@ func (r *cursorAgentReader) state(data []byte, s Session, depth int) error {
 				return err
 			}
 			s.Events = append(s.Events, Event{Role: "system", Kind: "file_reference", Blocks: []Block{{Type: "file", Path: item.text(1), Description: "Cursor Agent file snapshot cache excluded"}}})
+		}
+	}
+	latest, _ := time.Parse(time.RFC3339Nano, s.UpdatedAt)
+	for _, event := range s.Events {
+		if when, err := time.Parse(time.RFC3339Nano, event.Time); err == nil && when.After(latest) {
+			latest, s.UpdatedAt = when, event.Time
 		}
 	}
 	r.b.Sessions = append(r.b.Sessions, s)
@@ -486,6 +519,10 @@ func (r *cursorAgentReader) state(data []byte, s Session, depth int) error {
 			continue
 		}
 		cs := Session{ID: s.ID + "/" + key, ParentID: s.ID, Source: "cursor-agent", CWD: s.CWD, Title: "Subagent " + key}
+		cs.UpdatedAt = cursorAgentTimestamp(child.number(3))
+		if cs.UpdatedAt == "" {
+			cs.UpdatedAt = cursorAgentTimestamp(child.number(2))
+		}
 		cs.model(child.text(5))
 		r.active[activeKey] = true
 		err = r.state(child.data(1), cs, depth+1)
@@ -551,6 +588,10 @@ func (b *Bundle) cursorAgent(input string) error {
 			}
 			s := Session{ID: first(meta["agentId"], filepath.Base(filepath.Dir(path))), ParentID: str(object(meta["subagentInfo"])["parentAgentId"]), Title: str(meta["name"]), Source: "cursor-agent"}
 			s.model(meta["lastUsedModel"])
+			if created, ok := meta["createdAt"].(float64); ok && created > 0 {
+				s.UpdatedAt = stamp(created)
+				s.Events = append(s.Events, Event{Role: "system", Kind: "session_metadata", Time: s.UpdatedAt, Blocks: []Block{{Type: "context", Text: jsonText(obj{"created_at": s.UpdatedAt})}}})
+			}
 			r := &cursorAgentReader{b: b, q: q, cache: map[string][]byte{}, active: map[string]bool{}, read: totalRead, records: totalRecords}
 			body, err := r.blob(root)
 			if err != nil {
