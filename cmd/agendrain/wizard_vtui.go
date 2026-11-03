@@ -109,6 +109,7 @@ func newVTUIWizard() (wizardUI, func(), error) {
 // and closing its input reader. The desktop stays underneath all prompts.
 func (u *vtuiWizard) show(dialog *wizardModal) error {
 	u.fm.Push(dialog)
+	u.fm.Redraw()
 	if dialog.onFocus != nil {
 		dialog.onFocus()
 	}
@@ -185,7 +186,10 @@ func (u *vtuiWizard) Busy(title, text string, work func() error) error {
 	dialog.AddItem(cancel)
 	wizardDetail(labels, "| "+text, inner)
 	u.fm.Push(dialog)
-	defer u.fm.RemoveFrame(dialog)
+	defer func() {
+		u.fm.RemoveFrame(dialog)
+		u.fm.Redraw()
+	}()
 	u.fm.Redraw()
 	active := u.fm.Step(0)
 	if !active {

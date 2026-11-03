@@ -238,3 +238,38 @@ func TestVTUIWizardBusyReturnsWorkResult(t *testing.T) {
 		}
 	}
 }
+
+func TestVTUIWizardMessageRendersAfterBusyOnCleanScreen(t *testing.T) {
+	u := silentWizard(t)
+	readRendered := make(chan struct{})
+	if err := u.Busy("READING", "Reading marker", func() error {
+		u.fm.PostTask(func() {
+			var screen strings.Builder
+			u.fm.Screen().Dump(&screen)
+			if !strings.Contains(screen.String(), "Reading marker") {
+				t.Error("busy indicator was not rendered before read")
+			}
+			close(readRendered)
+		})
+		<-readRendered
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Consume every pending redraw so the next modal cannot inherit one. Merely
+	// injecting Enter would mask a missing redraw, because input dirties the UI.
+	for range 4 {
+		u.fm.Step(0)
+	}
+	u.fm.PostTask(func() {
+		var screen strings.Builder
+		u.fm.Screen().Dump(&screen)
+		if !strings.Contains(screen.String(), "Message marker") {
+			t.Error("message was not rendered before waiting for input")
+		}
+		u.fm.InjectEvents([]*vtinput.InputEvent{wizardKey(vtinput.VK_RETURN)})
+	})
+	if err := u.Message("RESULT", "Message marker"); err != nil {
+		t.Fatal(err)
+	}
+}
