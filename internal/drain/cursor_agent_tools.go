@@ -20,7 +20,13 @@ func caSplitText(v any, path string, blockType string, blocks *[]Block) any {
 		return x
 	case obj:
 		out := obj{}
-		for k, item := range x {
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			item := x[k]
 			child := k
 			if path != "" {
 				child = path + "." + k

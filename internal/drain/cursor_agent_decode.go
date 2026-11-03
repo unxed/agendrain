@@ -425,7 +425,12 @@ func (d *caDecoder) value(data []byte, depth int) (any, error) {
 func (r *cursorAgentReader) caKnown(message string, p cursorAgentProto) {
 	caLoadSchema()
 	schema := caMessages[message]
+	nums := make([]int, 0, len(p))
 	for num := range p {
+		nums = append(nums, num)
+	}
+	sort.Ints(nums)
+	for _, num := range nums {
 		if schema != nil && schema.fields[num] == nil {
 			r.b.warn(fmt.Sprintf("Cursor Agent %s has field %d that is not in the verified 2026.10.01-e373342 schema; it is not decoded", message, num))
 		}
