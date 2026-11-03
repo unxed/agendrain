@@ -170,6 +170,9 @@ func Prepare(b *Bundle, o Options) error {
 			}
 		}
 	}
+	if o.Images == "omit" || o.Images == "describe" {
+		omitEmbeddedImages(b)
+	}
 	if o.StripModels {
 		if err := stripModels(b, o.ModelNames); err != nil {
 			return err

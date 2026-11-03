@@ -114,7 +114,7 @@ agendrain export --source codex --session SESSION_ID --compact --images describe
 {"/path/to/screenshot.png": "The build log shows a linker error for the missing symbol Foo."}
 ```
 
-Missing descriptions are an error. `--images omit` explicitly removes pictures instead. To discard older tool results by choice, use `--prune-tools-before 2026-01-01T00:00:00Z`; each removed result receives a checksum marker. Pruning can discard evidence needed to understand a decision. Transformations are recorded in the output.
+Missing descriptions are an error. `--images omit` explicitly removes pictures instead. Both modes also replace image base64 embedded in recorded JSON context (base64 `source` objects with an `image/*` media type, `data:image/...;base64,` strings) with `{"$agendrain_omitted":{"bytes":N,"mime":M,"sha256":H}}` markers; non-image base64 is untouched. To discard older tool results by choice, use `--prune-tools-before 2026-01-01T00:00:00Z`; each removed result receives a checksum marker. Pruning can discard evidence needed to understand a decision. Transformations are recorded in the output.
 
 ## Model identities
 
