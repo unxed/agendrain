@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
+	"time"
 )
 
 var stopCodexHeader = errors.New("Codex metadata read")
@@ -68,7 +70,7 @@ func CatalogCodex(input string) (*Bundle, error) {
 		return nil, err
 	}
 	b := &Bundle{Version: Version, Assets: map[string][]byte{}}
-	seen := map[string]Session{}
+	seen := map[string]int{}
 	target := ""
 	for _, root := range roots {
 		paths, err := logPaths(root)
@@ -86,14 +88,13 @@ func CatalogCodex(input string) (*Bundle, error) {
 			if inputFile && filepath.Clean(path) == filepath.Clean(input) {
 				target = s.ID
 			}
-			if old, exists := seen[s.ID]; exists {
-				if !reflect.DeepEqual(old, s) {
-					return nil, fmt.Errorf("conflicting session metadata %q in Codex stores; select an explicit --input", s.ID)
+			if i, exists := seen[s.ID]; exists {
+				if err := mergeCodexSession(&b.Sessions[i], s); err != nil {
+					return nil, err
 				}
-				b.warn("Codex session " + s.ID + " appears in multiple rollouts; body equality is checked during export")
 				continue
 			}
-			seen[s.ID] = s
+			seen[s.ID] = len(b.Sessions)
 			b.Sessions = append(b.Sessions, s)
 		}
 	}
@@ -220,18 +221,34 @@ func LoadSelected(source, input, id string) (*Bundle, error) {
 	if err := b.codexFiles(paths, "", false); err != nil {
 		return nil, err
 	}
-	// Archival or migration can leave exact copies in both native stores. A
-	// different history under the same identity requires an explicit input.
-	seen := map[string]Session{}
-	sessions := b.Sessions[:0]
+	// File names and active/archive traversal do not define segment order.
+	// Sort whole segments by their first known timestamp, preserving undated
+	// records in each segment. If a segment is wholly undated, retain discovery
+	// order rather than assigning it an invented date.
+	allAnchored := true
 	for _, session := range b.Sessions {
-		if old, exists := seen[session.ID]; exists {
-			if !reflect.DeepEqual(old, session) {
-				return nil, fmt.Errorf("conflicting session %q in Codex stores; select an explicit --input", session.ID)
+		if codexFirstEventTime(session).IsZero() {
+			allAnchored = false
+			break
+		}
+	}
+	if allAnchored {
+		sort.SliceStable(b.Sessions, func(i, j int) bool {
+			return codexFirstEventTime(b.Sessions[i]).Before(codexFirstEventTime(b.Sessions[j]))
+		})
+	}
+	// A paginated thread can span multiple rollouts, including archived or
+	// compressed copies. Keep the union rather than choosing one file.
+	seen := map[string]int{}
+	sessions := make([]Session, 0, len(b.Sessions))
+	for _, session := range b.Sessions {
+		if i, exists := seen[session.ID]; exists {
+			if err := mergeCodexSession(&sessions[i], session); err != nil {
+				return nil, err
 			}
 			continue
 		}
-		seen[session.ID] = session
+		seen[session.ID] = len(sessions)
 		sessions = append(sessions, session)
 	}
 	b.Sessions = sessions
@@ -240,4 +257,114 @@ func LoadSelected(source, input, id string) (*Bundle, error) {
 		return nil, err
 	}
 	return b, nil
+}
+
+// mergeCodexSession merges segments and duplicate copies without collapsing
+// intentionally repeated identical records within an individual rollout.
+func mergeCodexSession(dst *Session, src Session) error {
+	if reflect.DeepEqual(*dst, src) {
+		return nil
+	}
+	if dst.ParentID != "" && src.ParentID != "" && dst.ParentID != src.ParentID {
+		return fmt.Errorf("conflicting parents for Codex session %q", src.ID)
+	}
+	// Working directories can change when a thread resumes. The display field
+	// holds one value, so preserve any additional segment directory as context.
+	if dst.CWD != "" && src.CWD != "" && dst.CWD != src.CWD {
+		codexKeepDirectoryContext(dst)
+		codexKeepDirectoryContext(&src)
+	}
+	if dst.ParentID == "" {
+		dst.ParentID = src.ParentID
+	}
+	dstActivity, srcActivity := codexSessionActivity(*dst), codexSessionActivity(src)
+	if !srcActivity.IsZero() && (dstActivity.IsZero() || srcActivity.After(dstActivity)) {
+		dst.UpdatedAt = srcActivity.UTC().Format(time.RFC3339Nano)
+		if src.Title != "" {
+			dst.Title = src.Title
+		}
+		if src.CWD != "" {
+			dst.CWD = src.CWD
+		}
+	}
+	if dst.Title == "" {
+		dst.Title = src.Title
+	}
+	if dst.CWD == "" {
+		dst.CWD = src.CWD
+	}
+	for _, model := range src.Models {
+		found := false
+		for _, old := range dst.Models {
+			if old == model {
+				found = true
+				break
+			}
+		}
+		if !found {
+			dst.Models = append(dst.Models, model)
+		}
+	}
+	counts := map[string]int{}
+	for _, event := range dst.Events {
+		counts[jsonText(event)]++
+	}
+	incoming := map[string]int{}
+	for _, event := range src.Events {
+		key := jsonText(event)
+		incoming[key]++
+		if incoming[key] > counts[key] || (event.ID == "" && event.Time == "") {
+			dst.Events = append(dst.Events, event)
+		}
+	}
+	allDated := true
+	for _, event := range dst.Events {
+		if codexRecordTime(event.Time).IsZero() {
+			allDated = false
+			break
+		}
+	}
+	if allDated {
+		sort.SliceStable(dst.Events, func(i, j int) bool {
+			return codexRecordTime(dst.Events[i].Time).Before(codexRecordTime(dst.Events[j].Time))
+		})
+	}
+	return nil
+}
+
+func codexRecordTime(value string) time.Time {
+	when, _ := time.Parse(time.RFC3339Nano, value)
+	return when
+}
+
+func codexFirstEventTime(s Session) time.Time {
+	for _, e := range s.Events {
+		if when := codexRecordTime(e.Time); !when.IsZero() {
+			return when
+		}
+	}
+	return time.Time{}
+}
+
+func codexSessionActivity(s Session) time.Time {
+	latest := codexRecordTime(s.UpdatedAt)
+	for _, e := range s.Events {
+		if when := codexRecordTime(e.Time); when.After(latest) {
+			latest = when
+		}
+	}
+	return latest
+}
+
+func codexKeepDirectoryContext(s *Session) {
+	if len(s.Events) == 0 {
+		return
+	}
+	e := Event{Role: "system", Kind: "session_context", Time: s.Events[0].Time, Blocks: []Block{{Type: "context", Text: jsonText(obj{"cwd": s.CWD})}}}
+	for _, old := range s.Events {
+		if reflect.DeepEqual(old, e) {
+			return
+		}
+	}
+	s.Events = append([]Event{e}, s.Events...)
 }
