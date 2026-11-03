@@ -6,7 +6,6 @@ import (
 	"compress/flate"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
@@ -281,7 +280,7 @@ func Write(b *Bundle, output string, o Options) error {
 	if o.Format == "zip" {
 		copy := *b
 		copy.AssetFiles = r.assetFiles
-		raw, e := json.MarshalIndent(copy, "", "  ")
+		raw, e := marshalJSON(copy, "  ")
 		if e != nil {
 			return e
 		}

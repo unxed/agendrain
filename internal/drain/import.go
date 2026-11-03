@@ -44,8 +44,21 @@ func jsonText(v any) string {
 	if s, ok := v.(string); ok {
 		return s
 	}
-	p, _ := json.Marshal(v)
+	p, _ := marshalJSON(v, "")
 	return string(p)
+}
+
+// marshalJSON keeps <, > and & literal: recorded prompts are full of markup,
+// and < escapes only make them longer and harder to read or search.
+func marshalJSON(v any, indent string) ([]byte, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", indent)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }
 func textBlock(s string) Block { return Block{Type: "text", Text: s} }
 func metadata(m obj, excluded ...string) []Block {

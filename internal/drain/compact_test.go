@@ -244,6 +244,25 @@ func TestCompactMovesEmbeddedBase64ToAssets(t *testing.T) {
 	}
 }
 
+func TestJSONKeepsMarkupReadable(t *testing.T) {
+	if got := jsonText(map[string]any{"a": "<system-reminder>&"}); got != `{"a":"<system-reminder>&"}` {
+		t.Fatal(got)
+	}
+	b := &Bundle{Version: 1, Assets: map[string][]byte{}, Sessions: []Session{{ID: "s", Events: []Event{{Role: "user", Blocks: []Block{{Type: "text", Text: "<b>keep & read</b>"}}}}}}}
+	out := filepath.Join(t.TempDir(), "m.zip")
+	if err := Write(b, out, Options{Format: "zip"}); err != nil {
+		t.Fatal(err)
+	}
+	back := load(t, "agendrain", out)
+	files, err := zipData(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(files["manifest.json"], []byte("<b>keep & read</b>")) || back.Sessions[0].Events[0].Blocks[0].Text != "<b>keep & read</b>" {
+		t.Fatal(string(files["manifest.json"]))
+	}
+}
+
 func TestCompactIsIdempotentOnReimport(t *testing.T) {
 	b := compactFixture()
 	if err := Prepare(b, Options{Compact: true}); err != nil {
