@@ -188,3 +188,16 @@ func TestCursorAgentDepthLimitAndDiscovery(t *testing.T) {
 		t.Fatal("wrong native paths", paths)
 	}
 }
+
+func TestCursorAgentAggregateBudgetBeforeBlobAllocation(t *testing.T) {
+	f := newCAFixture(t)
+	ref := f.blob([]byte("small reachable blob"))
+	r := &cursorAgentReader{q: f.db, cache: map[string][]byte{}, read: maxSourceBytes - 1}
+	if _, err := r.blob(ref); err == nil || !strings.Contains(err.Error(), "safety limit") {
+		t.Fatalf("aggregate byte budget ignored: %v", err)
+	}
+	r.records = 100000
+	if _, err := r.proto(nil); err == nil {
+		t.Fatal("reachable record budget ignored")
+	}
+}

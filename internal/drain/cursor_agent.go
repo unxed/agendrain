@@ -512,6 +512,8 @@ func (b *Bundle) cursorAgent(input string) error {
 	if b.Assets == nil {
 		b.Assets = map[string][]byte{}
 	}
+	var totalRead int64
+	totalRecords := 0
 	for _, path := range files {
 		err := snapshot(path, func(q *sql.Tx) error {
 			if !tableExists(q, "meta") || !tableExists(q, "blobs") {
@@ -549,12 +551,14 @@ func (b *Bundle) cursorAgent(input string) error {
 			}
 			s := Session{ID: first(meta["agentId"], filepath.Base(filepath.Dir(path))), ParentID: str(object(meta["subagentInfo"])["parentAgentId"]), Title: str(meta["name"]), Source: "cursor-agent"}
 			s.model(meta["lastUsedModel"])
-			r := &cursorAgentReader{b: b, q: q, cache: map[string][]byte{}, active: map[string]bool{}}
+			r := &cursorAgentReader{b: b, q: q, cache: map[string][]byte{}, active: map[string]bool{}, read: totalRead, records: totalRecords}
 			body, err := r.blob(root)
 			if err != nil {
 				return err
 			}
-			return r.state(body, s, 0)
+			err = r.state(body, s, 0)
+			totalRead, totalRecords = r.read, r.records
+			return err
 		})
 		if err != nil {
 			return fmt.Errorf("Cursor Agent %s: %w", path, err)
