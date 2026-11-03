@@ -112,8 +112,8 @@ func TestCursorAgentReachableRecordedContextAndOpaqueTool(t *testing.T) {
 	if b.Sessions[0].ID != "p" || b.Sessions[0].Title != "Synthetic work" || b.Sessions[0].Source != "cursor-agent" {
 		t.Fatal("wrong whitelisted metadata", b.Sessions[0])
 	}
-	if b.Sessions[0].UpdatedAt == "" {
-		t.Fatal("recorded creation date not available for session selection")
+	if !strings.Contains(s, "created_at") || b.Sessions[0].UpdatedAt != "" {
+		t.Fatal("creation date missing or falsely labeled as activity date")
 	}
 	if err := Prepare(b, Options{}); err != nil {
 		t.Fatal(err)
@@ -203,5 +203,10 @@ func TestCursorAgentAggregateBudgetBeforeBlobAllocation(t *testing.T) {
 	r.records = 100000
 	if _, err := r.proto(nil); err == nil {
 		t.Fatal("reachable record budget ignored")
+	}
+	r.records = 0
+	r.fields = 1000000
+	if _, err := r.proto([]byte{0x08, 0x01}); err == nil || !strings.Contains(err.Error(), "field limit") {
+		t.Fatalf("protobuf field allocation budget ignored: %v", err)
 	}
 }

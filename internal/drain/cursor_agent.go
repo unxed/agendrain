@@ -69,6 +69,7 @@ type cursorAgentReader struct {
 	cache   map[string][]byte
 	read    int64
 	records int
+	fields  int
 	active  map[string]bool
 }
 
@@ -79,6 +80,10 @@ func (r *cursorAgentReader) proto(p []byte) (cursorAgentProto, error) {
 	}
 	out := cursorAgentProto{}
 	for len(p) > 0 {
+		r.fields++
+		if r.fields > 1000000 {
+			return nil, fmt.Errorf("Cursor Agent exceeds 1000000 reachable protobuf field limit")
+		}
 		tag, n := binary.Uvarint(p)
 		if n <= 0 || tag>>3 == 0 || tag>>3 >= 1<<29 {
 			return nil, fmt.Errorf("invalid Cursor Agent protobuf tag")
@@ -415,8 +420,8 @@ func (r *cursorAgentReader) state(data []byte, s Session, depth int) error {
 	if err != nil {
 		return err
 	}
-	if when := cursorAgentTimestamp(p.number(26)); when != "" && s.UpdatedAt == "" {
-		s.UpdatedAt = when
+	if when := cursorAgentTimestamp(p.number(26)); when != "" {
+		s.Events = append(s.Events, Event{Role: "system", Kind: "session_metadata", Time: when, Blocks: []Block{{Type: "context", Text: jsonText(obj{"conversation_started_at": when})}}})
 	}
 	for _, uri := range p[9] {
 		if u, err := url.Parse(string(uri.data)); err == nil && u.Scheme == "file" && s.CWD == "" {
@@ -466,6 +471,9 @@ func (r *cursorAgentReader) state(data []byte, s Session, depth int) error {
 	}
 	latest, _ := time.Parse(time.RFC3339Nano, s.UpdatedAt)
 	for _, event := range s.Events {
+		if event.Kind == "session_metadata" {
+			continue
+		}
 		if when, err := time.Parse(time.RFC3339Nano, event.Time); err == nil && when.After(latest) {
 			latest, s.UpdatedAt = when, event.Time
 		}
@@ -520,8 +528,8 @@ func (r *cursorAgentReader) state(data []byte, s Session, depth int) error {
 		}
 		cs := Session{ID: s.ID + "/" + key, ParentID: s.ID, Source: "cursor-agent", CWD: s.CWD, Title: "Subagent " + key}
 		cs.UpdatedAt = cursorAgentTimestamp(child.number(3))
-		if cs.UpdatedAt == "" {
-			cs.UpdatedAt = cursorAgentTimestamp(child.number(2))
+		if created := cursorAgentTimestamp(child.number(2)); created != "" {
+			cs.Events = append(cs.Events, Event{Role: "system", Kind: "session_metadata", Time: created, Blocks: []Block{{Type: "context", Text: jsonText(obj{"created_at": created})}}})
 		}
 		cs.model(child.text(5))
 		r.active[activeKey] = true
@@ -551,6 +559,7 @@ func (b *Bundle) cursorAgent(input string) error {
 	}
 	var totalRead int64
 	totalRecords := 0
+	totalFields := 0
 	for _, path := range files {
 		err := snapshot(path, func(q *sql.Tx) error {
 			if !tableExists(q, "meta") || !tableExists(q, "blobs") {
@@ -589,16 +598,17 @@ func (b *Bundle) cursorAgent(input string) error {
 			s := Session{ID: first(meta["agentId"], filepath.Base(filepath.Dir(path))), ParentID: str(object(meta["subagentInfo"])["parentAgentId"]), Title: str(meta["name"]), Source: "cursor-agent"}
 			s.model(meta["lastUsedModel"])
 			if created, ok := meta["createdAt"].(float64); ok && created > 0 {
-				s.UpdatedAt = stamp(created)
-				s.Events = append(s.Events, Event{Role: "system", Kind: "session_metadata", Time: s.UpdatedAt, Blocks: []Block{{Type: "context", Text: jsonText(obj{"created_at": s.UpdatedAt})}}})
+				when := stamp(created)
+				s.Events = append(s.Events, Event{Role: "system", Kind: "session_metadata", Time: when, Blocks: []Block{{Type: "context", Text: jsonText(obj{"created_at": when})}}})
 			}
-			r := &cursorAgentReader{b: b, q: q, cache: map[string][]byte{}, active: map[string]bool{}, read: totalRead, records: totalRecords}
+			r := &cursorAgentReader{b: b, q: q, cache: map[string][]byte{}, active: map[string]bool{}, read: totalRead, records: totalRecords, fields: totalFields}
 			body, err := r.blob(root)
 			if err != nil {
 				return err
 			}
 			err = r.state(body, s, 0)
 			totalRead, totalRecords = r.read, r.records
+			totalFields = r.fields
 			return err
 		})
 		if err != nil {
