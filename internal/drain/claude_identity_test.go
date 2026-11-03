@@ -100,3 +100,37 @@ func TestClaudeAnonymousFallbackIDsDoNotContainAbsoluteInputRoot(t *testing.T) {
 		t.Fatalf("fallback identity leaks absolute import root: %q", b.Sessions[0].ID)
 	}
 }
+
+func TestClaudeAnonymousFallbackDoesNotMergeWithExplicitIdentity(t *testing.T) {
+	for _, tc := range []struct{ name, path, id string }{
+		{"legacy flat basename", "audit.jsonl", "audit"},
+		{"reserved nested fallback", "local_A/audit.jsonl", "file:local_A/audit"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := t.TempDir()
+			put(t, d, tc.path, `{"type":"user","content":"Anonymous task"}`+"\n")
+			put(t, d, "z_explicit.jsonl", `{"type":"user","sessionId":"`+tc.id+`","content":"Explicit task"}`+"\n")
+			b, err := Load("claude", d)
+			if err != nil {
+				if !strings.Contains(err.Error(), "identity collision") {
+					t.Fatalf("unclear collision error: %v", err)
+				}
+				return
+			}
+			if len(b.Sessions) != 2 {
+				t.Fatalf("anonymous and explicit histories merged: %s", jsonText(b.Sessions))
+			}
+		})
+	}
+}
+
+func TestClaudeAnonymousSingleFileRetainsLegacyBasename(t *testing.T) {
+	p := put(t, t.TempDir(), "audit.jsonl", `{"type":"user","content":"Anonymous task"}`+"\n")
+	b, err := Load("claude", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Sessions) != 1 || b.Sessions[0].ID != "audit" {
+		t.Fatalf("single anonymous file identity changed: %s", jsonText(b.Sessions))
+	}
+}
