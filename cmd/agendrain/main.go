@@ -244,7 +244,7 @@ func run(args []string, out, stderr io.Writer) int {
 	fs.Var(&histories, "history", "include sessions from a previous agendrain ZIP; repeatable")
 	fs.StringVar(&o.Files, "files", "none", "referenced local files: none, summary (structural excerpts), full")
 	fs.Int64Var(&o.MaxFileBytes, "max-file-bytes", 8<<20, "maximum referenced file size")
-	fs.BoolVar(&o.Compact, "compact", false, "replace exact repeated system/tool blocks with references")
+	fs.BoolVar(&o.Compact, "compact", false, "losslessly replace exact repeated tool/system blocks, context values and embedded base64 with references")
 	fs.StringVar(&o.Images, "images", "keep", "keep, describe (requires descriptions), or omit")
 	descriptions := fs.String("descriptions", "", "JSON object mapping image asset ID or original path to description")
 	fs.BoolVar(&o.Base64, "base64", false, "include non-image attachment bytes as base64 in Markdown modes")

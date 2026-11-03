@@ -118,7 +118,6 @@ func Prepare(b *Bundle, o Options) error {
 				}
 			}
 		}
-		seen := map[string]string{}
 		for ei := range s.Events {
 			e := &s.Events[ei]
 			label := fmt.Sprintf("%s event %d", s.ID, ei+1)
@@ -168,16 +167,6 @@ func Prepare(b *Bundle, o Options) error {
 					bl.Asset = ""
 					b.Changes = append(b.Changes, label+": image replaced with text")
 				}
-				if o.Compact && (e.Role == "tool" || e.Role == "system" || e.Role == "developer" || bl.Type == "tool_result") && bl.Asset == "" && bl.Text != "" {
-					key := e.Role + "\x00" + e.Kind + "\x00" + bl.Type + "\x00" + bl.Text
-					if prev, ok := seen[key]; ok {
-						bl.Type = "reference"
-						bl.Text = "Exact duplicate of " + prev
-						b.Changes = append(b.Changes, label+": duplicate replaced with reference")
-					} else {
-						seen[key] = label
-					}
-				}
 			}
 		}
 	}
@@ -186,6 +175,10 @@ func Prepare(b *Bundle, o Options) error {
 			return err
 		}
 		b.Changes = append(b.Changes, "Model identities removed; source client names identify storage formats")
+	}
+	// Compaction runs last so references point at the final exported values.
+	if o.Compact {
+		compactBundle(b, o)
 	}
 	// Unreferenced assets (including replaced images and other sessions) do not
 	// leave the machine and cannot bloat a compact export.
