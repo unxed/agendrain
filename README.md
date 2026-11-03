@@ -8,7 +8,7 @@ Download and unpack the binary for your OS from [Releases](https://github.com/un
 ./agendrain
 ```
 
-Choose **Claude Code → your project/conversation → ZIP → optional checkboxes → Save**. Give the ZIP to the next agent and ask it to read `conversation.md` and continue. **No session IDs to type, no Claude tokens, API key, or network access required.** On Windows launch `agendrain.exe`. Arrow keys select, Enter continues, Space changes a checkbox, Esc cancels.
+Choose **Claude Code → your project/conversation → ZIP → optional checkboxes → Save**. The wizard lists sessions with their date, project, title or first query, and short ID (shown only when titles collide); empty records and subagents are not listed as root conversations. It shows the selected environment. Press **Back** to revise a choice while keeping the current options, path, and selection. The interface uses Russian when the system locale is Russian and English otherwise. Give the ZIP to the next agent and ask it to read `conversation.md` and continue. **No session IDs to type, no Claude tokens, API key, or network access required.** On Windows launch `agendrain.exe`. Arrow keys select, Enter continues, Space changes a checkbox, Esc cancels.
 
 Export recorded AI agent conversations into a portable handoff that a person or another agent can read and continue. Written in Go; intended for Linux, macOS, and Windows. SQLite support does not require a C compiler.
 
@@ -51,6 +51,8 @@ agendrain export --source vtvibe --input /path/to/f4/ai/dialog.json --output han
 `--session` includes descendants found in the supplied store. Give it the enclosing store when subagent logs live separately. A store with multiple root sessions requires `--session` or an explicit `--all`. Missing referenced children produce warnings. `--strict` rejects exports with any completeness warnings; warnings are also included in the handoff.
 
 Codex listing reads session metadata without loading all conversation bodies; text output says `metadata only`, and JSON omits unknown event counts. Selecting a Codex session loads the chosen family after indexing session headers.
+
+Claude Code session discovery is separate from Claude Desktop discovery: each source uses the provenance of its actual scratch workspace. Claude Code's session list previews available metadata before selection.
 
 The default ZIP contains the main `conversation.md`, separate linked `subagents/00000001.md` documents, a versioned `manifest.json`, and deduplicated recorded attachments. Start with `conversation.md`; follow subagent links as needed. Everything remains inside one archive. Markdown-only modes keep all sessions in one long document. The export is context for a new conversation, not a native session restore. Existing destination files are never overwritten. See [format details](docs/FORMAT.md).
 

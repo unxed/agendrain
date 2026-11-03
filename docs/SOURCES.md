@@ -4,6 +4,10 @@ Use `agendrain sources` to inspect candidate paths on the current OS. Paths belo
 
 Without `--input`, a named source aggregates available discovered stores. Identical session copies are deduplicated, conflicting copies are errors, and bad candidates produce warnings. Supplying `--input` narrows processing to that store instead.
 
+In the interactive wizard, **Back** returns to the previous step while preserving options, input path, and current selection. The interface chooses Russian when the effective system locale is Russian, and English otherwise. Locale precedence is `LC_ALL`, `LC_MESSAGES`, then `LANG`; Windows uses its native locale fallback.
+
+Wizard session rows show the date, project, and title or first query. A short session ID is added only to distinguish title collisions. Empty records and subagents are omitted as root conversation rows. The selected environment is shown. Claude Code and Claude Desktop implicit discovery use the provenance of their actual scratch workspaces to keep the source families separate. An explicit `--input` continues to select exactly the supplied scope.
+
 SQLite stores are opened read-only and queried in a read transaction. For a consistent copied store, close the source application before copying, or use SQLite's backup mechanism. Copying only a live database file can omit data in its WAL. Exporting a log that is actively being appended can encounter an incomplete final record; retry after its writer is idle.
 
 ## Codex CLI and graphical Desktop
@@ -11,6 +15,8 @@ SQLite stores are opened read-only and queried in a read transaction. For a cons
 Both are handled by `--source codex` through locally available rollout files. The importer reads `.jsonl` and `.jsonl.zst` records: session metadata, turn context, messages, tools and results, compaction records, recorded plaintext reasoning, and other event context. Duplicated UI message mirrors are matched against response messages. Token counters and delta fragments are omitted.
 
 Discovery uses `$CODEX_HOME/sessions` and `$CODEX_HOME/archived_sessions`, defaulting to `~/.codex`; implicit input includes both available stores. Select an explicit store to narrow the input or use another profile. Metadata-only listing indexes session headers without reading complete conversation bodies; unknown event counts are omitted from JSON and shown as `metadata only` in text output. A selected export indexes headers, then loads the chosen session family rather than all unrelated transcript bodies. Passing a single rollout also indexes its enclosing `sessions`/`archived_sessions` tree for related children. Parent metadata and recorded tool references link available subagents.
+
+Wizard previews use session metadata before a conversation is selected. Sessions split across paginated rollout files are combined by session identity for listing and export.
 
 ```sh
 agendrain list --source codex
@@ -23,6 +29,8 @@ The client UI is not scraped. Cloud-only sessions without a local rollout are ou
 
 Use `--source claude` or `claude-code`. Discovery uses `$CLAUDE_CONFIG_DIR/projects`, defaulting to `~/.claude/projects`. Inputs may be a project directory, the full projects tree, or a transcript JSONL. The importer retains messages and structured context, including tool content and available thinking blocks. It merges matching session segments and suppresses identical repeated event IDs.
 
+The wizard previews Claude session metadata before selection; selected exports then load the chosen session family. This preview does not imply that transcripts are cached or instantly available.
+
 Current `<session-id>/subagents/agent-*.jsonl` and legacy neighboring `agent-*.jsonl` layouts are inspected for a selected transcript. Child relationships are retained when recorded. To maximize child coverage, supply the enclosing project store and select the root ID. Missing logs cannot be recovered.
 
 Anonymous logs nested in different directories receive path-scoped fallback identities instead of being merged by filename. Native resumed or forked UUID-named logs retain their copied earlier history under the current filename identity, with lineage metadata. Ambiguous mixed identities without a matching native UUID are rejected. Matching explicit session segments still merge and deduplicate identical events.
@@ -31,7 +39,7 @@ Anonymous logs nested in different directories receive path-scoped fallback iden
 
 `--source claude-desktop` accepts two different kinds of available input:
 
-- Local Code/Cowork JSONL directories, interpreted as recorded Claude agent logs and labeled as Desktop data. Discovery checks the platform configuration directory's `Claude/local-agent-mode-sessions`, then the Claude projects tree.
+- Local Code/Cowork JSONL directories, interpreted as recorded Claude agent logs and labeled as Desktop data. Implicit discovery follows Desktop scratch-workspace provenance, separately from Claude Code project discovery.
 - A user-supplied `conversations.json`, a directory containing it, or an official data-export ZIP containing it. This is an **offline import**, with no login, API, or live web extraction performed by agendrain.
 
 Ordinary cloud chats are not guaranteed to have complete native local logs. An official export is the fallback for those chats; even an export may omit attachment bytes, hidden system context, or reasoning. Only attachment bytes actually present and matched in the supplied archive can be included. Exported attachment `extracted_content` is not silently treated as a local file inclusion.
