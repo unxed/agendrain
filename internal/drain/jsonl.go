@@ -157,12 +157,29 @@ func (b *Bundle) codexFiles(ps []string, input string, single bool) error {
 	return nil
 }
 
+// claudeAnonymousID keeps legacy flat-file identities, while nested anonymous
+// logs need a path-scoped namespace (Desktop commonly names every log audit).
+// Only paths relative to the selected input are exposed in the fallback ID.
+func claudeAnonymousID(root, transcript string) (string, error) {
+	rel, err := filepath.Rel(root, transcript)
+	if err != nil {
+		return "", fmt.Errorf("Claude transcript identity: %w", err)
+	}
+	stem := strings.TrimSuffix(rel, ".jsonl")
+	if filepath.Dir(rel) == "." {
+		return stem, nil
+	}
+	return "file:" + filepath.ToSlash(stem), nil
+}
+
 func (b *Bundle) claude(input string) error {
 	ps, err := logPaths(input)
 	if err != nil {
 		return err
 	}
+	root := input
 	if i, e := os.Stat(input); e == nil && !i.IsDir() {
+		root = filepath.Dir(input)
 		child := strings.TrimSuffix(input, ".jsonl")
 		if i, e := os.Stat(filepath.Join(child, "subagents")); e == nil && i.IsDir() {
 			extra, e := logPaths(filepath.Join(child, "subagents"))
@@ -182,12 +199,20 @@ func (b *Bundle) claude(input string) error {
 		}
 	}
 	byID := map[string]int{}
+	// Only matching explicit IDs may merge distinct transcript files. A
+	// fallback spelling can collide with an explicit ID, even with a namespace.
+	anonymousPaths := map[string]string{}
 	titles := map[string]claudeTitles{}
 	eventIDs := map[string]map[string]string{}
 	target := ""
 	for _, p := range ps {
 		base := strings.TrimSuffix(filepath.Base(p), ".jsonl")
-		s := Session{ID: base, Source: "claude"}
+		fallback, err := claudeAnonymousID(root, p)
+		if err != nil {
+			return err
+		}
+		s := Session{ID: fallback, Source: "claude"}
+		recordedID := ""
 		var recordedTitles claudeTitles
 		child := strings.HasPrefix(base, "agent-")
 		if filepath.Base(filepath.Dir(p)) == "subagents" {
@@ -195,6 +220,13 @@ func (b *Bundle) claude(input string) error {
 		}
 		err = lines(p, func(m obj) error {
 			if id := str(m["sessionId"]); id != "" {
+				// A generic log has no rule for assigning identity-less metadata
+				// between different owners. Never attach an entire multiplexed file
+				// to whichever session happened to be named last.
+				if recordedID != "" && recordedID != id {
+					return fmt.Errorf("Claude transcript %s has multiple sessionId values; split it into one session per file before importing", p)
+				}
+				recordedID = id
 				if child {
 					if s.ParentID == "" {
 						s.ParentID = id
@@ -258,9 +290,17 @@ func (b *Bundle) claude(input string) error {
 			target = s.ID
 		}
 		idx, ok := byID[s.ID]
+		if ok && (recordedID == "" || anonymousPaths[s.ID] != "") {
+			if recordedID != "" || anonymousPaths[s.ID] != p {
+				return fmt.Errorf("Claude session identity collision %q: an anonymous transcript path conflicts with another file; import the files separately", s.ID)
+			}
+		}
 		if !ok {
 			idx = len(b.Sessions)
 			byID[s.ID] = idx
+			if recordedID == "" {
+				anonymousPaths[s.ID] = p
+			}
 			b.Sessions = append(b.Sessions, Session{ID: s.ID, ParentID: s.ParentID, Source: s.Source, CWD: s.CWD})
 			eventIDs[s.ID] = map[string]string{}
 		}
