@@ -254,23 +254,27 @@ func (u *vtuiWizard) selectDialog(title, help string, choices []wizardChoice) (*
 
 func (u *vtuiWizard) optionsDialog(title string, options []wizardOption) (*wizardModal, []*vtui.Checkbox) {
 	width := u.width()
-	height := max(12, len(options)+10)
+	height := max(12, len(options)*2+10)
+	compact := height > u.fm.Screen().Height()-2
+	if compact {
+		height = len(options)*2 + 7
+	}
 	dialog := u.modal(title, width, height)
 	x, y, inner := dialog.X1+2, dialog.Y1, width-4
 	wizardLabel(dialog, x, y+2, inner, "↑↓ / Tab — переход · Пробел — флажок · F1 — справка")
 	boxes := make([]*vtui.Checkbox, len(options))
 	for i, option := range options {
 		label := vtui.TruncateString(wizardVisibleText(option.Label), inner-4, "…")
-		box := vtui.NewCheckbox(x, y+4+i, wizardCaption(label), false)
+		box := vtui.NewCheckbox(x, y+4+i*2, wizardCaption(label), false)
 		if option.Checked {
 			box.State = 1
 		}
 		dialog.AddItem(box)
 		boxes[i] = box
 	}
-	details := []*vtui.Text{
-		wizardLabel(dialog, x, y+height-6, inner, ""),
-		wizardLabel(dialog, x, y+height-5, inner, ""),
+	var details []*vtui.Text
+	if !compact {
+		details = []*vtui.Text{wizardLabel(dialog, x, y+height-6, inner, ""), wizardLabel(dialog, x, y+height-5, inner, "")}
 	}
 	dialog.onFocus = func() {
 		for i, box := range boxes {
