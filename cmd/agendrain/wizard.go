@@ -82,6 +82,9 @@ func wizardProject(cwd string) string {
 
 func wizardSessionTime(s drain.Session) time.Time {
 	var latest time.Time
+	if when, err := time.Parse(time.RFC3339Nano, s.UpdatedAt); err == nil {
+		latest = when
+	}
 	for _, event := range s.Events {
 		if when, err := time.Parse(time.RFC3339Nano, event.Time); err == nil && when.After(latest) {
 			latest = when
@@ -317,9 +320,18 @@ func runWizard(ui wizardUI, out io.Writer) error {
 	if err != nil {
 		fullPath = destination
 	}
-	message := "Диалог сохранён:\n\n" + fullPath + "\n\nПередайте результат следующему агенту и попросите прочитать conversation.md."
+	entry := "conversation.md"
+	if o.Format == "md" {
+		entry = filepath.Base(destination)
+	}
+	message := "Диалог сохранён:\n\n" + fullPath + "\n\nПередайте результат следующему агенту и попросите прочитать " + entry + "."
 	if o.ImageArchive != "" {
 		message += "\n\nАрхив картинок: " + o.ImageArchive
+	} else if o.Format == "md" {
+		images := strings.TrimSuffix(fullPath, filepath.Ext(fullPath)) + "_images"
+		if info, e := os.Stat(images); e == nil && info.IsDir() {
+			message += "\n\nТакже передайте папку картинок:\n" + images
+		}
 	}
 	_ = ui.Message("Готово", message)
 	fmt.Fprintf(out, "Saved %s (%d sessions)\n", destination, len(b.Sessions))

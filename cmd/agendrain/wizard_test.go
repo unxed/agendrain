@@ -116,6 +116,19 @@ func TestWizardDiscoversOnlyExistingEnvironmentsAndExportsChildren(t *testing.T)
 	}
 }
 
+func TestWizardCodexOrdersByMetadataTimeRatherThanID(t *testing.T) {
+	d := wizardTestHome(t)
+	cliPut(t, filepath.Join(d, "codex", "sessions", "old.jsonl"), `{"type":"session_meta","payload":{"id":"zz-old","timestamp":"2026-11-02T00:00:00Z","cwd":"/work/Old"}}`+"\n")
+	cliPut(t, filepath.Join(d, "codex", "sessions", "new.jsonl"), `{"type":"session_meta","payload":{"id":"aa-new","timestamp":"2026-11-03T00:00:00Z","cwd":"/work/Runcity"}}`+"\n")
+	ui := &fakeWizardUI{picks: []string{"codex", "aa-new", "zip"}, destination: filepath.Join(d, "new.zip")}
+	if err := runWizard(ui, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if ui.choices[1][0].ID != "aa-new" || !strings.Contains(ui.choices[1][0].Detail, "2026-11-03") {
+		t.Fatal(ui.choices[1])
+	}
+}
+
 func TestWizardSortsSessionsAndUsesUserText(t *testing.T) {
 	d := wizardTestHome(t)
 	cliPut(t, filepath.Join(d, "claude", "projects", "project", "old.jsonl"), `{"type":"user","sessionId":"old","cwd":"/work/project","timestamp":"2026-01-01T00:00:00Z","message":{"role":"user","content":"Old task"}}`+"\n")

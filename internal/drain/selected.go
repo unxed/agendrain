@@ -82,7 +82,7 @@ func CatalogCodex(input string) (*Bundle, error) {
 				continue
 			}
 			fallback := strings.TrimSuffix(strings.TrimSuffix(filepath.Base(path), ".zst"), ".jsonl")
-			s := Session{ID: first(meta["id"], meta["session_id"], fallback), ParentID: parentThread(meta), Source: "codex", CWD: str(meta["cwd"]), Title: first(meta["title"], meta["name"])}
+			s := Session{ID: first(meta["id"], meta["session_id"], fallback), ParentID: parentThread(meta), Source: "codex", CWD: str(meta["cwd"]), Title: first(meta["title"], meta["name"]), UpdatedAt: stamp(meta["timestamp"])}
 			if inputFile && filepath.Clean(path) == filepath.Clean(input) {
 				target = s.ID
 			}
@@ -235,6 +235,7 @@ func LoadSelected(source, input, id string) (*Bundle, error) {
 		sessions = append(sessions, session)
 	}
 	b.Sessions = sessions
+	b.enrichCodexTitles(roots)
 	if err := b.Select(id); err != nil {
 		return nil, err
 	}

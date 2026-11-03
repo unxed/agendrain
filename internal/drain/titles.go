@@ -70,9 +70,10 @@ func codexMetadataHome(root string) string {
 	return root
 }
 
-func codexMetadataTitles(root string) map[string]string {
+func codexMetadataTitles(root string) (map[string]string, map[string]string) {
 	home := codexMetadataHome(root)
 	titles := map[string]string{}
+	updated := map[string]string{}
 	// Prefer the newest state schema; legacy snapshots must not override it.
 	files, _ := filepath.Glob(filepath.Join(home, "state_*.sqlite"))
 	version := func(p string) int {
@@ -88,8 +89,11 @@ func codexMetadataTitles(root string) map[string]string {
 			if err != nil {
 				return err
 			}
-			hasName := false
+			hasName, hasUpdated := false, false
 			for _, c := range columns {
+				if str(c["name"]) == "updated_at" {
+					hasUpdated = true
+				}
 				if str(c["name"]) == "name" {
 					hasName = true
 				}
@@ -98,11 +102,20 @@ func codexMetadataTitles(root string) map[string]string {
 			if hasName {
 				query = "SELECT id,title,name FROM threads"
 			}
+			if hasUpdated {
+				query += ",updated_at"
+			} // columns must precede FROM
+			if hasUpdated {
+				query = strings.Replace(query, " FROM threads,updated_at", ",updated_at FROM threads", 1)
+			}
 			rows, err := records(tx, query)
 			if err != nil {
 				return err
 			}
 			for _, r := range rows {
+				if when := stamp(r["updated_at"]); when != "" {
+					updated[str(r["id"])] = when
+				}
 				title := first(strings.TrimSpace(str(r["name"])), strings.TrimSpace(str(r["title"])))
 				if title != "" {
 					titles[str(r["id"])] = title
@@ -116,28 +129,33 @@ func codexMetadataTitles(root string) map[string]string {
 	// metadata and do not make otherwise-readable rollout headers unusable.
 	f, err := os.Open(filepath.Join(home, "session_index.jsonl"))
 	if err != nil {
-		return titles
+		return titles, updated
 	}
 	defer f.Close()
 	scan := bufio.NewScanner(f)
 	scan.Buffer(make([]byte, 64<<10), 1<<20)
 	for scan.Scan() {
 		var entry struct {
-			ID   string `json:"id"`
-			Name string `json:"thread_name"`
+			ID      string `json:"id"`
+			Name    string `json:"thread_name"`
+			Updated string `json:"updated_at"`
 		}
 		if json.Unmarshal(scan.Bytes(), &entry) != nil {
 			continue
+		}
+		if entry.ID != "" && entry.Updated != "" {
+			updated[entry.ID] = entry.Updated
 		}
 		if title := strings.TrimSpace(entry.Name); entry.ID != "" && title != "" {
 			titles[entry.ID] = title
 		}
 	}
-	return titles
+	return titles, updated
 }
 
 func (b *Bundle) enrichCodexTitles(roots []string) {
 	titles := map[string]string{}
+	activity := map[string]string{}
 	seen := map[string]bool{}
 	for _, root := range roots {
 		home := codexMetadataHome(root)
@@ -145,7 +163,11 @@ func (b *Bundle) enrichCodexTitles(roots []string) {
 			continue
 		}
 		seen[home] = true
-		for id, title := range codexMetadataTitles(root) {
+		names, times := codexMetadataTitles(root)
+		for id, when := range times {
+			activity[id] = when
+		}
+		for id, title := range names {
 			titles[id] = title
 		}
 	}
@@ -153,6 +175,7 @@ func (b *Bundle) enrichCodexTitles(roots []string) {
 		s := &b.Sessions[i]
 		if s.Source == "codex" {
 			s.Title = first(titles[s.ID], s.Title, projectTitle(s.CWD))
+			s.UpdatedAt = first(activity[s.ID], s.UpdatedAt)
 		}
 	}
 }

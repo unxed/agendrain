@@ -14,13 +14,14 @@ type Bundle struct {
 }
 
 type Session struct {
-	ID       string   `json:"id"`
-	ParentID string   `json:"parent_id,omitempty"`
-	Source   string   `json:"source"`
-	Title    string   `json:"title,omitempty"`
-	CWD      string   `json:"cwd,omitempty"`
-	Models   []string `json:"models,omitempty"`
-	Events   []Event  `json:"events"`
+	ID        string   `json:"id"`
+	ParentID  string   `json:"parent_id,omitempty"`
+	Source    string   `json:"source"`
+	Title     string   `json:"title,omitempty"`
+	UpdatedAt string   `json:"updated_at,omitempty"`
+	CWD       string   `json:"cwd,omitempty"`
+	Models    []string `json:"models,omitempty"`
+	Events    []Event  `json:"events"`
 }
 
 type Event struct {
