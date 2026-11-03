@@ -169,6 +169,11 @@ func claudeCatalogFile(root, p string) (claudeCatalogEntry, bool, error) {
 				s.UpdatedAt = when
 			}
 		}
+		// Child logs are indexed only to expose their parent relationship. The
+		// selected-family importer reads the full body when a child is exported.
+		if child && m.SessionID != "" {
+			break
+		}
 		if m.Type != "user" && m.Type != "assistant" || len(s.Events) > 0 && (s.Events[0].Role == "user" || m.Type != "user") {
 			continue
 		}

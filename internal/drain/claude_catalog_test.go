@@ -68,6 +68,35 @@ func TestClaudeCatalogNativeForkIdentity(t *testing.T) {
 	}
 }
 
+func TestClaudeCatalogChildIndexStopsAfterIdentity(t *testing.T) {
+	d := t.TempDir()
+	put(t, d, "parent.jsonl", `{"type":"user","sessionId":"parent","content":"Parent"}`+"\n")
+	put(t, d, "parent/subagents/agent-child.jsonl", `{"type":"assistant","sessionId":"parent","content":"Child preview"}`+"\n"+"corrupt child body\n")
+
+	b, err := CatalogClaude(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.Warnings) != 0 {
+		t.Fatalf("child catalog scanned body after identity: %v", b.Warnings)
+	}
+	if err := b.Select("parent"); err != nil {
+		t.Fatal(err)
+	}
+	var child *Session
+	for i := range b.Sessions {
+		if b.Sessions[i].ID == "parent/agent-child" {
+			child = &b.Sessions[i]
+		}
+	}
+	if child == nil || child.ParentID != "parent" || len(child.Events) != 0 {
+		t.Fatalf("child metadata was not indexed without reading its body: %+v", child)
+	}
+	if _, err := loadSelectedClaude(d, "parent/agent-child"); err == nil {
+		t.Fatal("canonical selected-family import accepted malformed child body")
+	}
+}
+
 // Opt in to inspect an existing store without logging any conversation content.
 func TestClaudeCatalogNativeStoreOptIn(t *testing.T) {
 	input := os.Getenv("AGENDRAIN_TEST_CLAUDE_STORE")
