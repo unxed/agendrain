@@ -273,3 +273,27 @@ func TestVTUIWizardMessageRendersAfterBusyOnCleanScreen(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestVTUIWizardSelectGrowsForLongRows(t *testing.T) {
+	u := silentWizard(t)
+	w, h := u.fm.Screen().Width(), u.fm.Screen().Height()
+	short, _ := u.selectDialog("Среда", "", []wizardChoice{{Title: "Codex"}, {Title: "Claude Code"}})
+	if got := short.X2 - short.X1 + 1; got != u.width() {
+		t.Fatalf("short list width %d, want default %d", got, u.width())
+	}
+	many := make([]wizardChoice, 60)
+	for i := range many {
+		many[i] = wizardChoice{Title: strings.Repeat("длинное название диалога ", 12)}
+	}
+	wide, list := u.selectDialog("Сессии", "", many)
+	vtui.AssertLayout(t, wide.Window)
+	if got := wide.X2 - wide.X1 + 1; got != w-4 {
+		t.Fatalf("long rows: dialog width %d, want %d of screen %d", got, w-4, w)
+	}
+	if got := wide.Y2 - wide.Y1 + 1; got != h-2 {
+		t.Fatalf("many rows: dialog height %d, want %d of screen %d", got, h-2, h)
+	}
+	if !strings.HasSuffix(list.Items[0], "…") {
+		t.Fatalf("long row not truncated with an ellipsis: %q", list.Items[0])
+	}
+}

@@ -238,6 +238,25 @@ func (u *vtuiWizard) width() int {
 	return min(76, u.fm.Screen().Width()-2)
 }
 
+// selectSize grows a choice list toward the whole screen when its rows are
+// wide or numerous, so long conversation rows stay readable. Short lists keep
+// the usual dialog size.
+func (u *vtuiWizard) selectSize(choices []wizardChoice) (int, int) {
+	screen := u.fm.Screen()
+	width, height := u.width(), u.height()
+	widest := 0
+	for _, choice := range choices {
+		widest = max(widest, vtui.StringWidth(wizardVisibleText(choice.Title)))
+	}
+	if widest+6 > width {
+		width = max(width, min(widest+6, screen.Width()-4))
+	}
+	if len(choices) > height-15 {
+		height = max(height, min(len(choices)+17, screen.Height()-2))
+	}
+	return width, height
+}
+
 func (u *vtuiWizard) height() int {
 	return min(22, u.fm.Screen().Height()-2)
 }
@@ -321,19 +340,23 @@ func (u *vtuiWizard) help(dialog *wizardModal, text string) {
 }
 
 func (u *vtuiWizard) selectDialog(title, help string, choices []wizardChoice) (*wizardModal, *vtui.ListBox) {
-	width, height := u.width(), u.height()
+	width, height := u.selectSize(choices)
 	dialog := u.modal(title, width, height)
 	x, y, inner := dialog.X1+2, dialog.Y1, width-4
 	wizardLabel(dialog, x, y+2, inner, help)
 	items := make([]string, len(choices))
 	for i, choice := range choices {
-		items[i] = wizardVisibleText(choice.Title)
+		items[i] = vtui.TruncateString(wizardVisibleText(choice.Title), inner, "…")
 	}
-	list := vtui.NewListBox(x, y+4, inner, height-15, items)
+	lines := 4
+	if height >= 28 {
+		lines = 6
+	}
+	list := vtui.NewListBox(x, y+4, inner, height-11-lines, items)
 	dialog.AddItem(list)
-	details := make([]*vtui.Text, 4)
+	details := make([]*vtui.Text, lines)
 	for i := range details {
-		details[i] = wizardLabel(dialog, x, y+height-10+i, inner, "")
+		details[i] = wizardLabel(dialog, x, y+height-6-lines+i, inner, "")
 	}
 	list.OnSelect = func(index int) {
 		if index >= 0 && index < len(choices) {

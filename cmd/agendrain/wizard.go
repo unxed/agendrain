@@ -264,7 +264,7 @@ func wizardSessionChoices(b *drain.Bundle) []wizardChoice {
 			}
 			for _, block := range event.Blocks {
 				if text := wizardBlockText(block); strings.TrimSpace(text) != "" {
-					snippet = wizardShort(text, 120)
+					snippet = wizardShort(text, 400)
 					break
 				}
 			}
@@ -282,10 +282,10 @@ func wizardSessionChoices(b *drain.Bundle) []wizardChoice {
 			title = untitled
 			if snippet != "" {
 				prefix := untitled + ": "
-				title = prefix + wizardQuote(wizardShort(wizardUnquote(snippet), 32))
+				title = prefix + wizardQuote(wizardShort(wizardUnquote(snippet), 160))
 			}
 		} else {
-			title = wizardShort(title, 44)
+			title = wizardShort(title, 160)
 		}
 		var detail []string
 		if session.Title != "" && session.Title != project0 {
@@ -294,7 +294,7 @@ func wizardSessionChoices(b *drain.Bundle) []wizardChoice {
 			detail = append(detail, uiText("Название: нет", "Title: none"))
 		}
 		if snippet != "" {
-			detail = append(detail, uiText("Первый запрос: ", "First request: ")+wizardQuote(wizardShort(wizardUnquote(snippet), 44)))
+			detail = append(detail, uiText("Первый запрос: ", "First request: ")+wizardQuote(wizardShort(wizardUnquote(snippet), 400)))
 		}
 		if session.CWD != "" {
 			detail = append(detail, uiText("Папка: ", "Folder: ")+wizardTilde(session.CWD, wizardHome()))
@@ -324,7 +324,7 @@ func wizardSessionChoices(b *drain.Bundle) []wizardChoice {
 		if count > 0 {
 			row += " · " + wizardRequests(count)
 		}
-		row += " · [" + wizardShort(project, 14) + "] " + title
+		row += " · [" + wizardShort(project, 32) + "] " + title
 		choices = append(choices, wizardChoice{ID: session.ID, Title: row, Detail: strings.Join(detail, "\n")})
 	}
 	counts := map[string]int{}
