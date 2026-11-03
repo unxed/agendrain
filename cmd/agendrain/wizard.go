@@ -83,6 +83,111 @@ func wizardProject(cwd string) string {
 	return name
 }
 
+func wizardQuote(text string) string {
+	return uiText("«", "“") + text + uiText("»", "”")
+}
+
+// wizardRequests spells the request count in plain words with correct
+// Russian plural forms.
+func wizardRequests(n int) string {
+	if !russianLocale(os.Getenv, nativeRussianLocale) {
+		if n == 1 {
+			return "1 request"
+		}
+		return fmt.Sprintf("%d requests", n)
+	}
+	word := "запросов"
+	if n%100 < 11 || n%100 > 14 {
+		switch n % 10 {
+		case 1:
+			word = "запрос"
+		case 2, 3, 4:
+			word = "запроса"
+		}
+	}
+	return fmt.Sprintf("%d %s", n, word)
+}
+
+// wizardTilde abbreviates a path under the home directory as ~/....
+func wizardTilde(cwd, home string) string {
+	label := wizardProjectLabel(cwd, home)
+	if label == "~" {
+		return "~"
+	}
+	h := strings.TrimRight(strings.ReplaceAll(home, "\\", "/"), "/")
+	c := strings.ReplaceAll(cwd, "\\", "/")
+	if h != "" && len(c) > len(h)+1 && c[len(h)] == '/' && strings.EqualFold(c[:len(h)], h) {
+		return "~" + c[len(h):]
+	}
+	return cwd
+}
+
+func wizardHome() string {
+	home, _ := os.UserHomeDir()
+	return home
+}
+
+// wizardProjectLabel is the short project tag of a row: "~" for the home
+// directory itself, "~/rel" for short or numeric names below it (ambiguous
+// as bare basenames), otherwise the basename.
+func wizardProjectLabel(cwd, home string) string {
+	norm := func(p string) string {
+		return strings.TrimRight(strings.ReplaceAll(p, "\\", "/"), "/")
+	}
+	c, h := norm(cwd), norm(home)
+	if c == "" {
+		return ""
+	}
+	if h != "" {
+		fold := len(h) > 1 && h[1] == ':'
+		eq := func(a, b string) bool {
+			if fold {
+				return strings.EqualFold(a, b)
+			}
+			return a == b
+		}
+		if eq(c, h) {
+			return "~"
+		}
+		if len(c) > len(h)+1 && c[len(h)] == '/' && eq(c[:len(h)], h) {
+			rel := c[len(h)+1:]
+			name := path.Base(rel)
+			ambiguous := len([]rune(name)) <= 2
+			if !ambiguous {
+				ambiguous = strings.Trim(name, "0123456789") == ""
+			}
+			if ambiguous {
+				return "~/" + rel
+			}
+		}
+	}
+	return wizardProject(cwd)
+}
+
+// wizardRequestCount returns the number of user requests when it is already
+// known without extra loading, or 0 when unknown.
+func wizardRequestCount(s drain.Session) int {
+	if s.Requests > 0 {
+		return s.Requests
+	}
+	n := 0
+	for _, event := range s.Events {
+		if event.Kind == "preview" {
+			return 0
+		}
+		if event.Role != "user" {
+			continue
+		}
+		for _, block := range event.Blocks {
+			if strings.TrimSpace(wizardBlockText(block)) != "" || (block.Type == "image" || block.Type == "file") && (block.Asset != "" || block.Path != "") {
+				n++
+				break
+			}
+		}
+	}
+	return n
+}
+
 func wizardSessionTime(s drain.Session) time.Time {
 	var latest time.Time
 	if when, err := time.Parse(time.RFC3339Nano, s.UpdatedAt); err == nil {
@@ -127,49 +232,60 @@ func wizardSessionChoices(b *drain.Bundle) []wizardChoice {
 				break
 			}
 		}
+		project0 := wizardProject(session.CWD)
 		title := session.Title
-		if title == wizardProject(session.CWD) && snippet != "" {
-			title += " — " + snippet
+		if title == project0 {
+			title = ""
 		}
+		untitled := uiText("Без названия", "Untitled")
 		if title == "" {
-			title = snippet
-		}
-		if title == "" {
-			title = wizardProject(session.CWD)
-		}
-		if title == "" {
-			title = uiText("Без названия", "Untitled")
+			title = untitled
+			if snippet != "" {
+				prefix := untitled + ": "
+				title = prefix + wizardQuote(wizardShort(snippet, 32))
+			}
+		} else {
+			title = wizardShort(title, 44)
 		}
 		var detail []string
-		if session.Title != "" {
-			detail = append(detail, session.Title)
+		if session.Title != "" && session.Title != project0 {
+			detail = append(detail, uiText("Название: ", "Title: ")+session.Title)
+		} else {
+			detail = append(detail, uiText("Название: нет", "Title: none"))
 		}
-		if snippet != "" && snippet != title {
-			detail = append(detail, snippet)
+		if snippet != "" {
+			detail = append(detail, uiText("Первый запрос: ", "First request: ")+wizardQuote(wizardShort(snippet, 44)))
 		}
 		if session.CWD != "" {
-			detail = append(detail, session.CWD)
+			detail = append(detail, uiText("Папка: ", "Folder: ")+wizardTilde(session.CWD, wizardHome()))
 		}
+		var tail []string
 		if when := wizardSessionTime(session); !when.IsZero() {
-			detail = append(detail, when.UTC().Format("2006-01-02 15:04 UTC"))
+			tail = append(tail, uiText("Последняя активность: ", "Last activity: ")+when.UTC().Format("2006-01-02 15:04"))
 		}
-		if snippet != "" && snippet != title {
-			detail = append(detail, snippet)
+		count := wizardRequestCount(session)
+		if count > 0 {
+			tail = append(tail, uiText("Запросов: ", "Requests: ")+fmt.Sprint(count))
 		}
-		detail = append(detail, "ID: "+session.ID)
+		tail = append(tail, "ID: "+session.ID)
+		detail = append(detail, strings.Join(tail, " · "))
 		when := uiText("дата ?", "date ?")
 		if t := wizardSessionTime(session); !t.IsZero() {
 			when = t.UTC().Format("2006-01-02 15:04")
 		}
-		project := wizardProject(session.CWD)
+		project := wizardProjectLabel(session.CWD, wizardHome())
 		if strings.Contains(strings.ToLower(strings.ReplaceAll(session.CWD, "\\", "/")), "/claude/scratch-workspaces/") {
 			project = "Desktop"
 		}
 		if project == "" {
 			project = uiText("без проекта", "no project")
 		}
-		row := when + " · [" + wizardShort(project, 12) + "] " + wizardShort(title, 34)
-		choices = append(choices, wizardChoice{ID: session.ID, Title: row, Detail: strings.Join(detail, " · ")})
+		row := when
+		if count > 0 {
+			row += " · " + wizardRequests(count)
+		}
+		row += " · [" + wizardShort(project, 14) + "] " + title
+		choices = append(choices, wizardChoice{ID: session.ID, Title: row, Detail: strings.Join(detail, "\n")})
 	}
 	counts := map[string]int{}
 	for _, choice := range choices {
@@ -385,7 +501,7 @@ func runWizard(ui wizardUI, out io.Writer) error {
 				continue
 			}
 			wizardRemember(ui, selected.ID)
-			choice, err := wizardSelect(ui, fmt.Sprintf(uiText("Сессии · %s", "Sessions · %s"), environment.Title), uiText("Сначала недавние диалоги. Субагенты включаются при экспорте.", "Recent conversations first. Subagents are included on export."), choices)
+			choice, err := wizardSelect(ui, fmt.Sprintf(uiText("Сессии · %s", "Sessions · %s"), environment.Title), uiText("Каждая строка — один диалог: дата, запросы, [папка], название", "Each line is one conversation: date, requests, [folder], title"), choices)
 			if errors.Is(err, errWizardBack) {
 				stage = 0
 				continue

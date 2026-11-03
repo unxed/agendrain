@@ -22,6 +22,9 @@ type Session struct {
 	CWD       string   `json:"cwd,omitempty"`
 	Models    []string `json:"models,omitempty"`
 	Events    []Event  `json:"events"`
+	// Requests is the number of user requests counted cheaply while cataloging
+	// when Events holds only a preview. Zero means unknown. Never serialized.
+	Requests int `json:"-"`
 }
 
 type Event struct {

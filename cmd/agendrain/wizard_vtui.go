@@ -270,7 +270,10 @@ func wizardLabel(dialog *wizardModal, x, y, width int, text string) *vtui.Text {
 }
 
 func wizardDetail(labels []*vtui.Text, text string, width int) {
-	lines := vtui.WrapText(wizardVisibleText(text), width)
+	var lines []string
+	for _, part := range strings.Split(text, "\n") {
+		lines = append(lines, vtui.WrapText(wizardVisibleText(part), width)...)
+	}
 	for i, label := range labels {
 		line := ""
 		if i < len(lines) {
@@ -326,11 +329,11 @@ func (u *vtuiWizard) selectDialog(title, help string, choices []wizardChoice) (*
 	for i, choice := range choices {
 		items[i] = wizardVisibleText(choice.Title)
 	}
-	list := vtui.NewListBox(x, y+4, inner, height-14, items)
+	list := vtui.NewListBox(x, y+4, inner, height-15, items)
 	dialog.AddItem(list)
-	details := make([]*vtui.Text, 3)
+	details := make([]*vtui.Text, 4)
 	for i := range details {
-		details[i] = wizardLabel(dialog, x, y+height-9+i, inner, "")
+		details[i] = wizardLabel(dialog, x, y+height-10+i, inner, "")
 	}
 	list.OnSelect = func(index int) {
 		if index >= 0 && index < len(choices) {

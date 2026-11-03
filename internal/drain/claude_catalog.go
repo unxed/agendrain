@@ -51,6 +51,9 @@ func CatalogClaude(input string) (*Bundle, error) {
 		if dest.CWD == "" {
 			dest.CWD = s.CWD
 		}
+		if s.Requests > dest.Requests {
+			dest.Requests = s.Requests
+		}
 		if s.UpdatedAt > dest.UpdatedAt {
 			dest.UpdatedAt = s.UpdatedAt
 		}
@@ -142,6 +145,8 @@ func claudeCatalogFile(root, p string) (claudeCatalogEntry, bool, error) {
 			CustomTitle string          `json:"customTitle"`
 			AITitle     string          `json:"aiTitle"`
 			Summary     string          `json:"summary"`
+			IsMeta      bool            `json:"isMeta"`
+			Sidechain   bool            `json:"isSidechain"`
 		}
 		if err := json.Unmarshal(raw, &m); err != nil {
 			damaged = true
@@ -173,6 +178,9 @@ func claudeCatalogFile(root, p string) (claudeCatalogEntry, bool, error) {
 		// selected-family importer reads the full body when a child is exported.
 		if child && m.SessionID != "" {
 			break
+		}
+		if m.Type == "user" && !m.IsMeta && !m.Sidechain && claudeCatalogIsRequest(raw) {
+			s.Requests++
 		}
 		if m.Type != "user" && m.Type != "assistant" || len(s.Events) > 0 && (s.Events[0].Role == "user" || m.Type != "user") {
 			continue
@@ -220,6 +228,30 @@ func claudeCatalogFile(root, p string) (claudeCatalogEntry, bool, error) {
 		}
 	}
 	return entry, damaged, nil
+}
+
+// claudeCatalogIsRequest reports whether a user record is a typed request and
+// not a tool result. Only lines mentioning tool_result are decoded further.
+func claudeCatalogIsRequest(raw []byte) bool {
+	if !bytes.Contains(raw, []byte("tool_result")) {
+		return true
+	}
+	var m struct {
+		Message struct {
+			Content []struct {
+				Type string `json:"type"`
+			} `json:"content"`
+		} `json:"message"`
+	}
+	if json.Unmarshal(raw, &m) != nil || len(m.Message.Content) == 0 {
+		return true
+	}
+	for _, block := range m.Message.Content {
+		if block.Type != "tool_result" {
+			return true
+		}
+	}
+	return false
 }
 
 func claudeCatalogText(raw json.RawMessage) string {

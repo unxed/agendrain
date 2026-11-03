@@ -163,3 +163,19 @@ func TestClaudeCatalogAttachmentOnlyUserRemainsAvailable(t *testing.T) {
 		})
 	}
 }
+
+func TestClaudeCatalogCountsUserRequests(t *testing.T) {
+	d := t.TempDir()
+	put(t, d, "c.jsonl", `{"type":"user","sessionId":"c","message":{"content":"one"}}`+"\n"+
+		`{"type":"assistant","sessionId":"c","message":{"content":[{"type":"tool_use","name":"x"}]}}`+"\n"+
+		`{"type":"user","sessionId":"c","message":{"content":[{"type":"tool_result","content":"r"}]}}`+"\n"+
+		`{"type":"user","sessionId":"c","isMeta":true,"message":{"content":"meta"}}`+"\n"+
+		`{"type":"user","sessionId":"c","message":{"content":[{"type":"text","text":"two"}]}}`+"\n")
+	b, err := CatalogClaude(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Sessions[0].Requests != 2 {
+		t.Fatal(b.Sessions[0].Requests)
+	}
+}
