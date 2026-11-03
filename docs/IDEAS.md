@@ -12,7 +12,13 @@ The current scope is extracting recorded conversations from local AI application
   design work. This is an idea to assess, not part of the current utility.
 - Semantic pruning: detect obsolete tool observations and superseded facts while
   preserving the exact requirements and decision wording, with a reviewable
-  deletion plan. Current compact mode only replaces exact duplicates; older
-  tool results are removed solely under an explicit cutoff option.
+  deletion plan. Current compact mode only replaces exact duplicates (whole blocks and
+  nested JSON values) with references; older tool results are removed solely
+  under an explicit cutoff option.
+- Collapsed Markdown view: optional opt-in view that reduces pure transport
+  records (e.g. Claude api-request metadata) to pointers into manifest.json,
+  since the Markdown is a second full copy of the content. Not done because
+  classifying "technical" records is source-specific and risks hiding user
+  wording such as queued messages.
 - Additional Cursor storage generations: decode proprietary binary agentKv
   records when a verifiable schema and redistributable fixtures are available.

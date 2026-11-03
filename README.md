@@ -106,7 +106,7 @@ agendrain export --source codex --session SESSION_ID --compact --output compact.
 agendrain export --source codex --session SESSION_ID --compact --images describe --descriptions descriptions.json --output text-first.zip
 ```
 
-`--compact` replaces exact repeated system/developer/tool text blocks with references inside each session. It preserves user and assistant wording and does not decide that an old requirement or decision is obsolete. Assets are deduplicated in normal ZIPs and unused assets are removed.
+`--compact` is lossless and reference-based; it does not summarize and does not decide that an old requirement or decision is obsolete. After model stripping, exact duplicate tool/system/tool-result blocks become `reference` blocks pointing to the first copy anywhere in the exported session family (parent and subagents). Repeated JSON values of at least 256 bytes inside recorded `context` blocks (system-prompt snapshots, tool definitions, API request copies, per-block metadata) become `$agendrain_duplicate` pointers to an identical kept value, and large base64 payloads inside context move to `assets/`. Recorded user/assistant text, reasoning, tool calls and results, and file content are never rewritten in place, so wording stays verbatim; they serve as anchors for the pointers. Compacting a compact ZIP again is a no-op. On a real 150-session Claude Code family this shrank the ZIP from 108.8 MB to 62.2 MB. See [docs/FORMAT.md](docs/FORMAT.md) for resolving markers.
 
 `--images describe` replaces each picture with an existing or supplied description. `descriptions.json` is an object mapping asset IDs from `manifest.json`, or original image paths, to text:
 
