@@ -182,11 +182,13 @@ func (b *Bundle) claude(input string) error {
 		}
 	}
 	byID := map[string]int{}
+	titles := map[string]claudeTitles{}
 	eventIDs := map[string]map[string]string{}
 	target := ""
 	for _, p := range ps {
 		base := strings.TrimSuffix(filepath.Base(p), ".jsonl")
 		s := Session{ID: base, Source: "claude"}
+		var recordedTitles claudeTitles
 		child := strings.HasPrefix(base, "agent-")
 		if filepath.Base(filepath.Dir(p)) == "subagents" {
 			s.ParentID = filepath.Base(filepath.Dir(filepath.Dir(p)))
@@ -205,6 +207,7 @@ func (b *Bundle) claude(input string) error {
 			if s.CWD == "" {
 				s.CWD = str(m["cwd"])
 			}
+			recordedTitles.observe(m)
 			msg := object(m["message"])
 			s.model(msg["model"])
 			typ := str(m["type"])
@@ -262,6 +265,10 @@ func (b *Bundle) claude(input string) error {
 			eventIDs[s.ID] = map[string]string{}
 		}
 		dest := &b.Sessions[idx]
+		recorded := titles[s.ID]
+		recorded.merge(recordedTitles)
+		titles[s.ID] = recorded
+		dest.Title = recorded.title(first(dest.CWD, s.CWD))
 		for _, m := range s.Models {
 			dest.model(m)
 		}

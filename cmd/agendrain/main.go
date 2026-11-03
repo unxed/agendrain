@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 )
 
 var version = "dev"
+var wizardLauncher = launchWizard
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
@@ -25,6 +27,7 @@ func (s *stringList) Set(v string) error { *s = append(*s, v); return nil }
 const help = `agendrain — portable recorded context for another AI agent
 
 Usage:
+  agendrain                 interactive export wizard
   agendrain sources
   agendrain list   --source CLIENT [--input PATH]
   agendrain export --source CLIENT [--input PATH] --session ID --output handoff.zip
@@ -116,7 +119,19 @@ func loadInput(source, input, id string) (*drain.Bundle, error) {
 
 func run(args []string, out, stderr io.Writer) int {
 	fail := func(err error) int { fmt.Fprintln(stderr, "agendrain:", err); return 1 }
-	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+	if len(args) == 0 || args[0] == "wizard" || args[0] == "--wizard" {
+		if len(args) > 1 {
+			return fail(fmt.Errorf("wizard takes no arguments; use export for scripted options"))
+		}
+		if err := wizardLauncher(out); err != nil {
+			if errors.Is(err, errWizardCanceled) {
+				return 0
+			}
+			return fail(err)
+		}
+		return 0
+	}
+	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		fmt.Fprint(out, help)
 		return 0
 	}
@@ -319,4 +334,23 @@ func run(args []string, out, stderr io.Writer) int {
 	}
 	fmt.Fprintf(out, "Saved %s (%d bytes, %d sessions)\n", *output, info.Size(), len(b.Sessions))
 	return 0
+}
+
+func launchWizard(out io.Writer) error {
+	ui, cleanup, err := newVTUIWizard()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	var result bytes.Buffer
+	err = runWizard(ui, &result)
+	if err != nil && !errors.Is(err, errWizardCanceled) {
+		_ = ui.Message("Ошибка экспорта", err.Error())
+	}
+	cleanup()
+	if err != nil {
+		return err
+	}
+	_, err = out.Write(result.Bytes())
+	return err
 }

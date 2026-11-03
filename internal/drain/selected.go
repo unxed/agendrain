@@ -100,6 +100,7 @@ func CatalogCodex(input string) (*Bundle, error) {
 	if len(b.Sessions) == 0 {
 		return nil, fmt.Errorf("no usable Codex session metadata found: %s", strings.Join(b.Warnings, "; "))
 	}
+	b.enrichCodexTitles(roots)
 	if inputFile {
 		if target == "" {
 			return nil, fmt.Errorf("selected Codex transcript has no usable metadata")

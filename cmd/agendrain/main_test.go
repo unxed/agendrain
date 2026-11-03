@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,24 @@ import (
 
 	"github.com/unxed/agendrain/internal/drain"
 )
+
+func TestNoArgumentsLaunchWizardAndHelpRemainsScriptable(t *testing.T) {
+	old := wizardLauncher
+	defer func() { wizardLauncher = old }()
+	calls := 0
+	wizardLauncher = func(w io.Writer) error { calls++; return nil }
+	var out, stderr bytes.Buffer
+	if run(nil, &out, &stderr) != 0 || calls != 1 {
+		t.Fatal("default invocation did not start wizard")
+	}
+	if run([]string{"--help"}, &out, &stderr) != 0 || calls != 1 {
+		t.Fatal("help started interactive wizard")
+	}
+	wizardLauncher = func(io.Writer) error { return errWizardCanceled }
+	if run(nil, &out, &stderr) != 0 {
+		t.Fatal("wizard cancellation should be quiet and successful")
+	}
+}
 
 func TestCLIExportAndList(t *testing.T) {
 	d := t.TempDir()
