@@ -53,7 +53,7 @@ agendrain export --source vtvibe --input /path/to/f4/ai/dialog.json --output han
 
 Codex listing reads session metadata without loading all conversation bodies; text output says `metadata only`, and JSON omits unknown event counts. Selecting a Codex session loads the chosen family after indexing session headers.
 
-The default ZIP contains readable `conversation.md`, a versioned `manifest.json`, and deduplicated recorded attachments. Extract it and ask the next agent to read `conversation.md` and continue. The export is context for a new conversation, not a native session restore. Existing destination files are never overwritten. See [format details](docs/FORMAT.md).
+The default ZIP contains the main `conversation.md`, separate linked `subagents/00000001.md` documents, a versioned `manifest.json`, and deduplicated recorded attachments. Start with `conversation.md`; follow subagent links as needed. Everything remains inside one archive. Markdown-only modes keep all sessions in one long document. The export is context for a new conversation, not a native session restore. Existing destination files are never overwritten. See [format details](docs/FORMAT.md).
 
 ## Markdown and numbered images
 
