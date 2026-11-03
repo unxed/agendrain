@@ -33,9 +33,9 @@ var errWizardCanceled = errors.New("wizard canceled")
 func wizardEnvironments() []wizardChoice {
 	var choices []wizardChoice
 	for _, client := range []wizardChoice{
-		{ID: "codex", Title: "Codex (Desktop + CLI)"},
-		{ID: "claude", Title: "Claude Code"},
-		{ID: "claude-desktop", Title: "Claude Desktop (local Code/Cowork)"},
+		{ID: "codex", Title: "Codex (Desktop и консоль)"},
+		{ID: "claude", Title: "Claude Code (консоль)"},
+		{ID: "claude-desktop", Title: "Claude Desktop (локальные Code/Cowork)"},
 		{ID: "opencode", Title: "OpenCode"},
 		{ID: "cursor", Title: "Cursor"},
 		{ID: "vtvibe", Title: "vtvibe (f4)"},
@@ -122,6 +122,9 @@ func wizardSessionChoices(b *drain.Bundle) []wizardChoice {
 			}
 		}
 		title := session.Title
+		if title == wizardProject(session.CWD) && snippet != "" {
+			title += " — " + snippet
+		}
 		if title == "" {
 			title = snippet
 		}
@@ -129,7 +132,7 @@ func wizardSessionChoices(b *drain.Bundle) []wizardChoice {
 			title = wizardProject(session.CWD)
 		}
 		if title == "" {
-			title = "Conversation"
+			title = "Диалог"
 		}
 		var detail []string
 		if session.CWD != "" {
@@ -189,12 +192,12 @@ func runWizard(ui wizardUI, out io.Writer) error {
 	environments := wizardEnvironments()
 	if len(environments) == 0 {
 		text := "No local agent stores were found. For a copied store, use agendrain export --source CLIENT --input PATH --output handoff.zip."
-		if err := ui.Message("No local conversations", text); err != nil {
+		if err := ui.Message("Локальная история не найдена", text); err != nil {
 			return err
 		}
 		return errors.New(text)
 	}
-	environment, err := wizardSelect(ui, "Choose an environment", "Only detected local stores are shown.", environments)
+	environment, err := wizardSelect(ui, "Откуда перенести диалог?", "Показаны среды с найденной локальной историей.", environments)
 	if err != nil {
 		return err
 	}
@@ -211,31 +214,31 @@ func runWizard(ui wizardUI, out io.Writer) error {
 	if len(choices) == 0 {
 		return fmt.Errorf("no root conversations found in %s; inspect a copied store with --input PATH", environment.Title)
 	}
-	selected, err := wizardSelect(ui, "Choose a conversation", "Newest conversations first. Subagent conversations are included automatically.", choices)
+	selected, err := wizardSelect(ui, "Выберите сессию", "Сначала недавние сессии. Истории субагентов включаются автоматически.", choices)
 	if err != nil {
 		return err
 	}
-	format, err := wizardSelect(ui, "Choose an output format", "A ZIP is one portable file with conversation, context, and recorded attachments.", []wizardChoice{
-		{ID: "zip", Title: "ZIP archive — one file", Detail: "Markdown, portable manifest, and attachments"},
-		{ID: "md-images", Title: "Markdown + image folder", Detail: "For Google AI Studio and similar tools"},
-		{ID: "md-image-zip", Title: "Markdown + image ZIP", Detail: "Two files: a Markdown document and a ZIP of numbered images"},
+	format, err := wizardSelect(ui, "Формат сохранения", "По умолчанию — один ZIP со всей доступной историей и вложениями.", []wizardChoice{
+		{ID: "zip", Title: "ZIP — один файл (рекомендуется)", Detail: "Основной диалог, отдельные истории субагентов, метаданные и вложения"},
+		{ID: "md-images", Title: "Markdown + папка картинок", Detail: "Один длинный документ и пронумерованные картинки для AI Studio"},
+		{ID: "md-image-zip", Title: "Markdown + архив картинок", Detail: "Два файла: длинный Markdown и ZIP с пронумерованными картинками"},
 	})
 	if err != nil {
 		return err
 	}
 	options := []wizardOption{
-		{ID: "compact", Label: "Compact exact duplicates", Detail: "Keep decisions and wording; reference repeated tool/system blocks"},
-		{ID: "strip-models", Label: "Remove model names", Detail: "Remove recorded and recognized model identities"},
-		{ID: "images-omit", Label: "Omit images", Detail: "Replace image bytes with an omission notice"},
-		{ID: "files-summary", Label: "Include file summaries", Detail: "Read current local files only inside an explicitly allowed directory"},
-		{ID: "files-full", Label: "Include full local files", Detail: "Read current local files only inside an explicitly allowed directory"},
+		{ID: "compact", Label: "Сжать контекст: убрать точные повторы", Detail: "Формулировки требований и решений сохраняются, повторы заменяются ссылками"},
+		{ID: "strip-models", Label: "Скрыть названия моделей", Detail: "Удалить имена моделей из текста и метаданных"},
+		{ID: "images-omit", Label: "Убрать картинки", Detail: "Вместо картинок останутся отметки об их исключении"},
+		{ID: "files-summary", Label: "Добавить краткие описания файлов", Detail: "Только файлы внутри выбранной вами разрешённой папки"},
+		{ID: "files-full", Label: "Добавить содержимое файлов целиком", Detail: "Только файлы внутри выбранной вами разрешённой папки"},
 	}
 	if format.ID != "zip" {
-		options = append(options, wizardOption{ID: "base64", Label: "Include other attachments as base64", Detail: "Non-text, non-image attachments; increases document size"})
+		options = append(options, wizardOption{ID: "base64", Label: "Добавить прочие вложения в base64", Detail: "Для вложений, которые не являются текстом или картинками; увеличивает размер"})
 	}
 	var checked map[string]bool
 	for {
-		options, err = ui.Options("Optional export changes", options)
+		options, err = ui.Options("Дополнительные опции", options)
 		if err != nil {
 			return err
 		}
@@ -246,7 +249,7 @@ func runWizard(ui wizardUI, out io.Writer) error {
 		if !checked["files-summary"] || !checked["files-full"] {
 			break
 		}
-		if err := ui.Message("Choose one file mode", "Select file summaries or full file contents, not both."); err != nil {
+		if err := ui.Message("Выберите один режим файлов", "Выберите краткие описания или полное содержимое файлов, но не оба режима сразу."); err != nil {
 			return err
 		}
 	}
@@ -269,7 +272,7 @@ func runWizard(ui wizardUI, out io.Writer) error {
 		if checked["files-full"] {
 			o.Files = "full"
 		}
-		root, err := ui.Input("Local file inclusion", "Allowed file root", session.CWD)
+		root, err := ui.Input("Какие файлы можно прочитать?", "Разрешённая папка", session.CWD)
 		if err != nil {
 			return err
 		}
@@ -282,7 +285,7 @@ func runWizard(ui wizardUI, out io.Writer) error {
 		}
 		o.Roots = []string{root}
 	}
-	destination, err := ui.Input("Save conversation", "Destination", wizardDefaultDestination(session, format.ID))
+	destination, err := ui.Input("Куда сохранить диалог?", "Новый файл для сохранения", wizardDefaultDestination(session, format.ID))
 	if err != nil {
 		return err
 	}
@@ -303,7 +306,7 @@ func runWizard(ui wizardUI, out io.Writer) error {
 		return err
 	}
 	if len(b.Warnings) > 0 {
-		if err := ui.Message("Source limitations", strings.Join(b.Warnings, "\n")); err != nil {
+		if err := ui.Message("Ограничения исходной истории", strings.Join(b.Warnings, "\n")); err != nil {
 			return err
 		}
 	}

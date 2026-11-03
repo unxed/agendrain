@@ -57,7 +57,7 @@ func (f *fakeWizardUI) Options(title string, options []wizardOption) ([]wizardOp
 }
 
 func (f *fakeWizardUI) Input(title, label, initial string) (string, error) {
-	if label == "Allowed file root" {
+	if label == "Разрешённая папка" {
 		return f.root, nil
 	}
 	return f.destination, nil

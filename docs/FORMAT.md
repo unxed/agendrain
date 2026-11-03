@@ -4,13 +4,14 @@ The normal `--format zip` output is the reusable handoff format. It has:
 
 ```text
 conversation.md
+subagents/00000001.md
 manifest.json
 assets/<sha256>.<extension>
 ```
 
-`conversation.md` is the human/model view. `manifest.json` is the canonical normalized representation of the **prepared export**, including explicitly requested redaction, compaction, image replacement, or pruning. It is not an untouched copy of the native store. A requested external rewrite changes the Markdown view only.
+`conversation.md` is the main human/model entry point. Its links lead to separate numbered documents for subagent histories, with links back to their parent and the main conversation. All of these files remain inside one ZIP. Markdown-only export modes keep every session in one combined document. An explicitly requested external rewrite also produces a combined Markdown view. `manifest.json` is the canonical normalized representation of the **prepared export**, including explicitly requested redaction, compaction, image replacement, or pruning. It is not an untouched copy of the native store. A requested external rewrite changes the Markdown view only.
 
-The ZIP uses DEFLATE at best compression, sorted entry names, and fixed timestamps, so equivalent prepared content yields identical bytes. Attachment bytes are shared by content hash; their extension derives from media type, with `.bin` as the fallback. Paths in the manifest and Markdown are relative to the ZIP root. No original store is modified.
+The ZIP uses DEFLATE at best compression, sorted entry names, and fixed timestamps, so equivalent prepared content yields identical bytes. Attachment bytes are shared by content hash; their extension derives from media type, with `.bin` as the fallback. Asset paths in the manifest are relative to the ZIP root; Markdown links are relative to each document, including `../assets/` in subagent documents. No original store is modified.
 
 ## Manifest
 
