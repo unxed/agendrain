@@ -172,6 +172,22 @@ func claudeAnonymousID(root, transcript string) (string, error) {
 	return "file:" + filepath.ToSlash(stem), nil
 }
 
+func claudeUUID(name string) bool {
+	if len(name) != 36 {
+		return false
+	}
+	for i, c := range name {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				return false
+			}
+		} else if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
 func (b *Bundle) claude(input string) error {
 	ps, err := logPaths(input)
 	if err != nil {
@@ -213,6 +229,7 @@ func (b *Bundle) claude(input string) error {
 		}
 		s := Session{ID: fallback, Source: "claude"}
 		recordedID := ""
+		var recordedIDs []string
 		var recordedTitles claudeTitles
 		child := strings.HasPrefix(base, "agent-")
 		if filepath.Base(filepath.Dir(p)) == "subagents" {
@@ -220,11 +237,12 @@ func (b *Bundle) claude(input string) error {
 		}
 		err = lines(p, func(m obj) error {
 			if id := str(m["sessionId"]); id != "" {
-				// A generic log has no rule for assigning identity-less metadata
-				// between different owners. Never attach an entire multiplexed file
-				// to whichever session happened to be named last.
-				if recordedID != "" && recordedID != id {
-					return fmt.Errorf("Claude transcript %s has multiple sessionId values; split it into one session per file before importing", p)
+				known := false
+				for _, previous := range recordedIDs {
+					known = known || previous == id
+				}
+				if !known {
+					recordedIDs = append(recordedIDs, id)
 				}
 				recordedID = id
 				if child {
@@ -285,6 +303,26 @@ func (b *Bundle) claude(input string) error {
 		})
 		if err != nil {
 			return err
+		}
+		if len(recordedIDs) > 1 {
+			// Native resumed/forked transcripts copy earlier records retaining
+			// their original sessionId. The UUID filename identifies the current
+			// conversation; earlier messages are its deliberately copied context.
+			owner := base
+			if child {
+				owner = s.ParentID
+			}
+			matched := false
+			for _, id := range recordedIDs {
+				matched = matched || strings.EqualFold(owner, id)
+			}
+			if !claudeUUID(owner) || !matched {
+				return fmt.Errorf("Claude transcript %s has multiple sessionId values without a matching native UUID filename; cannot determine conversation ownership", p)
+			}
+			if !child {
+				s.ID = owner
+			}
+			s.Events = append([]Event{{Role: "system", Kind: "session_lineage", Blocks: []Block{{Type: "context", Text: jsonText(obj{"native_session_id": owner, "recorded_history_session_ids": recordedIDs})}}}}, s.Events...)
 		}
 		if p == input {
 			target = s.ID
