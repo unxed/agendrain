@@ -73,9 +73,27 @@ Cursor's private storage is version-dependent. **Binary `agentKv` state is not d
 
 Use `--source cursor-agent` for the CLI's separate local `store.db` format. The wizard lists **Cursor Agent (console)** separately from the IDE. Discovery checks `chats` and `acp-sessions` below `$CURSOR_CONFIG_DIR`, then `$XDG_CONFIG_HOME/cursor`, or `~/.cursor` when neither override is set. An explicit input can be a database, a session directory, or an enclosing native store. The official [CLI configuration reference](https://prod.cursor.com/docs/cli/reference/configuration) documents the configuration override; the private storage schema was checked against the installed official CLI build `2026.10.01-e373342`.
 
-The importer follows reachable SHA-256 blob references from the current root in a read-only SQLite snapshot. It decodes recorded prompt JSON, user and assistant messages, plaintext thinking, shell turns, available selected images and rule instructions, hook context, and inline or referenced subagent states. It checks blob integrity and applies byte, record, field and nesting limits. Unreachable blobs are not scanned for chat text.
+The importer follows reachable SHA-256 blob references from the current root in a read-only SQLite snapshot. It checks blob integrity and applies byte, record, field and nesting limits. Unreachable blobs are not scanned for chat text.
 
-Tool-specific protobuf records and some other typed state remain **opaque attachments with type/checksum metadata and warnings**, rather than being presented as fully decoded context. Normal ZIPs retain those bytes; Markdown needs `--base64` to retain them. Model-name removal does not inspect opaque binary attachments. This reader does not decode Cursor IDE's `agentKv`.
+**Schema.** Field numbers, names, oneof variants and enums are taken from the protobuf descriptors bundled in the official CLI (`agent.v1`, compact protobuf-es descriptors in the CLI's `index.js`), checked against build `2026.10.01-e373342`. `internal/drain/cursor_agent_schema.go` is generated from that bundle by `scripts/cursor_agent_schema.py <versions/BUILD>`; re-run it against a newer CLI to see what changed. The schema-driven decoder produces JSON with the schema's field names.
+
+**Decoded now:**
+
+- recorded prompt JSON, user messages (text, selected images, rule instructions, hook context, plus the remaining typed `SelectedContext` entries and `UserMessage` metadata such as mode and thread id), assistant messages, plaintext thinking, user shell turns, per-turn metadata (request id, dynamic tool names, subagent dispatch steps);
+- **every `ToolCall` variant of that build** (shell, read, edit, delete, grep, glob, ls, mcp, task, todos, plans, web search/fetch, await, switch mode, and the rest of the 69-variant oneof): a `tool_call` event with the tool name, call id, start time and the decoded `args` (plus per-call fields such as `description`), then a `tool_result` event with the decoded `result` (success, failure, rejected and other result variants, exit codes, file paths, diff strings, line counts). Long multi-line strings (command output, file contents, diffs, plan text) are moved into their own blocks so they stay readable, and the JSON refers to them. `TruncatedToolCall` follows its stored original step when that blob exists;
+- todo items, conversation summaries and summary archives (summary text and counts), mode, token details, plan registry, goal state, read paths and the other typed `ConversationStateStructure` fields, and inline or referenced subagent states;
+- the session working directory, from `meta.json` next to `store.db` (the CLI writes it there; the `chats/<md5 of cwd>/` directory name is the MD5 of the same path), falling back to the first workspace URI recorded in the state. Child states inherit it.
+
+The shell-parser analysis in `ShellArgs` (`parsing_result`, `simple_commands`) is omitted because it is derived from the command text.
+
+**Not decoded / kept with warnings:**
+
+- Any field, `ToolCall` variant, enum value or conversation step that is not in the checked schema is **never dropped**: unknown fields appear in `_unknown_fields` (raw value) with a warning naming the message and field number; unknown step or turn variants are kept as opaque protobuf attachments with type and checksum metadata (Markdown needs `--base64` to include these bytes). Model-name removal does not inspect opaque binary attachments.
+- The root `plan` blob (field 7) is kept opaque: the descriptor types it only as `bytes`.
+- Summary archives list the blob ids of earlier model-context messages; they are counted but not expanded, because they are JSON copies of turns that are already decoded from the turn list.
+- Binary field values in tool records (for example image bytes) are retained as ZIP assets with a descriptive file block.
+- The side files `prompt_history.json` and `pasted_text.json` are not read.
+- This reader does not decode Cursor IDE's `agentKv`.
 
 Encryption/authentication metadata and cached project-file snapshots are excluded. Selected-file paths remain references; explicit file options can include current local contents under an allowed root. The importer never opens referenced project paths on its own. This experimental schema is version-specific; unsupported variants fail or produce completeness warnings.
 

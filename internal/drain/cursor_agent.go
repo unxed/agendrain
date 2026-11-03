@@ -276,16 +276,32 @@ func (r *cursorAgentReader) selectedContext(s *Session, p []byte) ([]Block, erro
 		}
 		blocks = append(blocks, Block{Type: "context", Text: rule.text(2), Path: rule.text(1), Description: "Recorded Cursor rule instruction"})
 	}
-	for field := range context {
-		if field != 1 && field != 3 && field != 4 && field != 5 && field != 6 && field != 10 {
-			r.b.warn(fmt.Sprintf("Cursor Agent SelectedContext field %d is not decoded; file/attachment snapshots are not exported implicitly", field))
-		}
+	// Everything else (folders, diffs, links, past chats, console logs, ...)
+	// is decoded from the schema; unknown fields stay in _unknown_fields.
+	d := &caDecoder{r: r, skip: map[string]bool{}}
+	caLoadSchema()
+	for _, num := range []int{1, 3, 4, 5, 6, 10} {
+		d.skip["SelectedContext."+caMessages["SelectedContext"].fields[num].name] = true
+	}
+	rest, err := d.message("SelectedContext", p, 0)
+	if err != nil {
+		return nil, err
+	}
+	if len(rest) > 0 {
+		blocks = append(blocks, Block{Type: "context", Text: jsonText(rest), Description: "Recorded selected context entries"})
+	}
+	for _, a := range d.attachments {
+		blocks = append(blocks, Block{Type: "file", MIME: "application/octet-stream", Asset: r.b.asset(a.data), Description: "Recorded selected context binary value " + a.path})
 	}
 	return blocks, nil
 }
 
 func (r *cursorAgentReader) user(s *Session, id []byte) error {
-	p, err := r.blobProto(id)
+	raw, err := r.blob(id)
+	if err != nil {
+		return err
+	}
+	p, err := r.proto(raw)
 	if err != nil {
 		return err
 	}
@@ -324,6 +340,31 @@ func (r *cursorAgentReader) user(s *Session, id []byte) error {
 		}
 		e.Blocks = append(e.Blocks, Block{Type: "context", Name: hook.text(1), Text: hook.text(2), Description: "Recorded hook additional context"})
 	}
+	if ref := p.data(19); len(ref) > 0 && p.text(8) == "" {
+		data, err := r.blob(ref)
+		if err != nil {
+			return err
+		}
+		if !utf8.Valid(data) {
+			return fmt.Errorf("Cursor Agent user rich text blob is not UTF-8")
+		}
+		e.Blocks = append(e.Blocks, Block{Type: "context", Text: string(data), Description: "Recorded rich text"})
+	}
+	d := &caDecoder{r: r, skip: map[string]bool{}}
+	caLoadSchema()
+	for _, num := range []int{1, 2, 3, 8, 11, 18, 19, 21, 25, 26} {
+		d.skip["UserMessage."+caMessages["UserMessage"].fields[num].name] = true
+	}
+	meta, err := d.message("UserMessage", raw, 0)
+	if err != nil {
+		return err
+	}
+	if len(meta) > 0 {
+		e.Blocks = append(e.Blocks, Block{Type: "context", Text: jsonText(meta), Description: "Recorded user-message metadata"})
+	}
+	for _, a := range d.attachments {
+		e.Blocks = append(e.Blocks, Block{Type: "file", MIME: "application/octet-stream", Asset: r.b.asset(a.data), Description: "Recorded user-message binary value " + a.path})
+	}
 	s.Events = append(s.Events, e)
 	return nil
 }
@@ -343,27 +384,33 @@ func (r *cursorAgentReader) turn(s *Session, id []byte) error {
 				return err
 			}
 		}
+		d := &caDecoder{r: r, skip: map[string]bool{}}
+		caLoadSchema()
+		// Steps are decoded below; the encrypted model is credential-like and excluded.
+		for _, num := range []int{1, 2, 4} {
+			d.skip["AgentConversationTurnStructure."+caMessages["AgentConversationTurnStructure"].fields[num].name] = true
+		}
+		meta, err := d.message("AgentConversationTurnStructure", turn, 0)
+		if err != nil {
+			return err
+		}
+		if len(meta) > 0 {
+			block := Block{Type: "context", Text: jsonText(meta), Description: "Recorded turn metadata"}
+			if last := len(s.Events) - 1; len(a.data(1)) > 0 && last >= 0 {
+				s.Events[last].Blocks = append(s.Events[last].Blocks, block)
+			} else {
+				s.Events = append(s.Events, Event{Role: "system", Kind: "turn_metadata", Blocks: []Block{block}})
+			}
+		}
 		for _, ref := range a[2] {
 			step, err := r.blobProto(ref.data)
 			if err != nil {
 				return err
 			}
 			if tool := step.data(2); len(tool) > 0 {
-				meta, err := r.proto(tool)
-				if err != nil {
+				if err := r.toolCall(s, tool, 0); err != nil {
 					return err
 				}
-				name := ""
-				// Names are verified ToolCall oneof tags, never guessed from data.
-				for _, tool := range []struct {
-					field int
-					name  string
-				}{{1, "shell"}, {3, "delete"}, {4, "glob"}, {5, "grep"}, {8, "read"}, {9, "update_todos"}, {10, "read_todos"}, {12, "edit"}, {13, "ls"}, {15, "mcp"}, {19, "task"}} {
-					if len(meta[tool.field]) > 0 {
-						name = tool.name
-					}
-				}
-				r.opaque(s, tool, "agent.v1.ToolCall", "assistant", "tool_call", meta.text(57), name)
 				continue
 			}
 			field, kind := 1, "message"
@@ -371,16 +418,22 @@ func (r *cursorAgentReader) turn(s *Session, id []byte) error {
 				field, kind = 3, "reasoning"
 			}
 			if len(step[field]) == 0 {
-				return fmt.Errorf("unsupported Cursor Agent ConversationStep variant")
+				stepBytes, _ := r.blob(ref.data)
+				r.opaque(s, stepBytes, "agent.v1.ConversationStep (unknown variant)", "assistant", "recorded_state", "", "")
+				continue
 			}
+			r.caKnown("ConversationStep", step)
 			message, err := r.proto(step.data(field))
 			if err != nil {
 				return err
 			}
 			started, completed := 2, 3
+			schemaName := "AssistantMessage"
 			if kind == "reasoning" {
 				started, completed = 3, 4
+				schemaName = "ThinkingMessage"
 			}
+			r.caKnown(schemaName, message)
 			when := message.number(completed)
 			if when == 0 {
 				when = message.number(started)
@@ -398,6 +451,7 @@ func (r *cursorAgentReader) turn(s *Session, id []byte) error {
 		if err != nil {
 			return err
 		}
+		r.caKnown("ShellConversationTurnStructure", a)
 		command, err := r.blobProto(a.data(1))
 		if err != nil {
 			return err
@@ -406,10 +460,17 @@ func (r *cursorAgentReader) turn(s *Session, id []byte) error {
 		if err != nil {
 			return err
 		}
+		r.caKnown("ShellCommand", command)
+		r.caKnown("ShellOutput", output)
 		s.Events = append(s.Events, Event{Role: "user", Kind: "shell_command", Blocks: []Block{textBlock(command.text(1))}}, Event{Role: "tool", Kind: "tool_result", Name: "shell", Blocks: []Block{{Type: "tool_result", Text: jsonText(obj{"stdout": output.text(1), "stderr": output.text(2), "exit_code": int32(output.number(3))})}}})
 		return nil
 	}
-	return fmt.Errorf("unsupported Cursor Agent ConversationTurnStructure variant")
+	raw, err := r.blob(id)
+	if err != nil {
+		return err
+	}
+	r.opaque(s, raw, "agent.v1.ConversationTurnStructure (unknown variant)", "system", "recorded_state", "", "")
+	return nil
 }
 
 func (r *cursorAgentReader) state(data []byte, s Session, depth int) error {
@@ -447,17 +508,62 @@ func (r *cursorAgentReader) state(data []byte, s Session, depth int) error {
 			if err != nil {
 				return err
 			}
-			if field == 6 {
+			switch field {
+			case 6:
 				summary, err := r.proto(body)
 				if err != nil {
 					return err
 				}
+				r.caKnown("ConversationSummary", summary)
 				s.Events = append(s.Events, Event{Role: "system", Kind: "compaction", Blocks: []Block{{Type: "context", Text: summary.text(1)}}})
-			} else {
-				typeName := map[int]string{3: "agent.v1.TodoItem", 7: "Cursor Agent plan blob (type not verified)", 11: "agent.v1.ConversationSummaryArchive", 13: "agent.v1.ConversationSummaryArchive"}[field]
-				r.opaque(&s, body, typeName, "system", "recorded_state", "", "")
+			case 3:
+				d := &caDecoder{r: r}
+				todo, err := d.message("TodoItem", body, 0)
+				if err != nil {
+					return err
+				}
+				s.Events = append(s.Events, Event{Role: "system", Kind: "todo", Blocks: []Block{{Type: "context", Text: jsonText(todo), Description: "Recorded todo item"}}})
+			case 11, 13:
+				d := &caDecoder{r: r}
+				archive, err := d.message("ConversationSummaryArchive", body, 0)
+				if err != nil {
+					return err
+				}
+				if count := len(arr(archive["summarized_messages"])); count > 0 {
+					// These are blob references to model-context JSON copies of the
+					// turns already decoded from the turn list; they are counted, not expanded.
+					archive["summarized_message_count"] = count
+					delete(archive, "summarized_messages")
+					r.b.warn("Cursor Agent summary archive message blobs are counted but not expanded; they are model-context copies of earlier turns")
+				}
+				text := str(archive["summary"])
+				delete(archive, "summary")
+				blocks := []Block{{Type: "context", Text: text, Description: "Recorded conversation summary archive"}}
+				if len(archive) > 0 {
+					blocks = append(blocks, Block{Type: "context", Text: jsonText(archive), Description: "Summary archive metadata"})
+				}
+				s.Events = append(s.Events, Event{Role: "system", Kind: "compaction", Blocks: blocks})
+			default:
+				r.opaque(&s, body, "Cursor Agent plan blob (type not verified)", "system", "recorded_state", "", "")
 			}
 		}
+	}
+	// Remaining typed state (mode, token details, plans registry, goal state,
+	// communicate updates, read paths, ...) is decoded from the schema. Blob
+	// references handled above, file snapshot caches and child states are skipped.
+	rest := &caDecoder{r: r, skip: map[string]bool{}}
+	caLoadSchema()
+	for _, num := range []int{1, 3, 6, 7, 8, 11, 12, 13, 15, 16, 26, 31, 35} {
+		if f := caMessages["ConversationStateStructure"].fields[num]; f != nil {
+			rest.skip["ConversationStateStructure."+f.name] = true
+		}
+	}
+	state, err := rest.message("ConversationStateStructure", data, 0)
+	if err != nil {
+		return err
+	}
+	if len(state) > 0 {
+		s.Events = append(s.Events, Event{Role: "system", Kind: "conversation_state", Blocks: []Block{{Type: "context", Text: jsonText(state), Description: "Recorded Cursor Agent conversation state"}}})
 	}
 	// No content/initial_content, fileStates or fileStatesV2 blob is followed.
 	for _, field := range []int{12, 15} {
@@ -542,6 +648,28 @@ func (r *cursorAgentReader) state(data []byte, s Session, depth int) error {
 	return nil
 }
 
+// cursorAgentSessionCWD reads the session working directory that the CLI writes
+// to meta.json next to store.db. The chats/<md5(cwd)>/ directory name is the
+// MD5 of the same path, which makes it a cross-check rather than a source.
+func cursorAgentSessionCWD(dir string) string {
+	path := filepath.Join(dir, "meta.json")
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 1<<20 {
+		return ""
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var meta struct {
+		CWD string `json:"cwd"`
+	}
+	if json.Unmarshal(raw, &meta) != nil || !filepath.IsAbs(meta.CWD) {
+		return ""
+	}
+	return meta.CWD
+}
+
 func (b *Bundle) cursorAgent(input string) error {
 	info, err := os.Stat(input)
 	if err != nil {
@@ -595,7 +723,7 @@ func (b *Bundle) cursorAgent(input string) error {
 				b.warn("Cursor Agent store has no recorded conversation: " + path)
 				return nil
 			}
-			s := Session{ID: first(meta["agentId"], filepath.Base(filepath.Dir(path))), ParentID: str(object(meta["subagentInfo"])["parentAgentId"]), Title: str(meta["name"]), Source: "cursor-agent"}
+			s := Session{ID: first(meta["agentId"], filepath.Base(filepath.Dir(path))), ParentID: str(object(meta["subagentInfo"])["parentAgentId"]), Title: str(meta["name"]), Source: "cursor-agent", CWD: cursorAgentSessionCWD(filepath.Dir(path))}
 			s.model(meta["lastUsedModel"])
 			if created, ok := meta["createdAt"].(float64); ok && created > 0 {
 				when := stamp(created)
@@ -615,7 +743,7 @@ func (b *Bundle) cursorAgent(input string) error {
 			return fmt.Errorf("Cursor Agent %s: %w", path, err)
 		}
 	}
-	b.warn("Experimental Cursor Agent CLI schema: recorded prompts, user/assistant/thinking/shell and local child states are decoded; other typed records remain protobuf attachments")
+	b.warn("Experimental Cursor Agent CLI schema (checked against 2026.10.01-e373342): prompts, messages, thinking, tool calls/results, todos, summaries, state and local child states are decoded; plan blobs and unrecognised variants remain opaque protobuf attachments, and unknown fields are kept as _unknown_fields")
 	b.warn("Cursor Agent file snapshot caches and encryption/authentication metadata are excluded; referenced project files are never opened by this importer")
 	return nil
 }

@@ -67,7 +67,7 @@ func loadCA(t *testing.T, input string) *Bundle {
 	return b
 }
 
-func TestCursorAgentReachableRecordedContextAndOpaqueTool(t *testing.T) {
+func TestCursorAgentReachableRecordedContextAndDecodedTool(t *testing.T) {
 	f := newCAFixture(t)
 	prompt := f.blob([]byte(`{"role":"system","content":"Exact recorded system instruction"}`))
 	image := f.blob([]byte{137, 80, 78, 71})
@@ -91,7 +91,7 @@ func TestCursorAgentReachableRecordedContextAndOpaqueTool(t *testing.T) {
 	f.meta(root)
 	b := loadCA(t, f.path)
 	s := joined(b)
-	for _, required := range []string{"Exact recorded system instruction", "Exact user requirement", "Exact assistant decision", "Recorded thinking", "Exact mandatory hook instruction", "beforeSubmitPrompt", "git status", "clean output", "recorded stderr", "private.go", "call-1", "agent.v1.ToolCall"} {
+	for _, required := range []string{"Exact recorded system instruction", "Exact user requirement", "Exact assistant decision", "Recorded thinking", "Exact mandatory hook instruction", "beforeSubmitPrompt", "git status", "clean output", "recorded stderr", "private.go", "call-1", "Recorded shell tool"} {
 		if !strings.Contains(s, required) {
 			t.Errorf("missing recorded context %q", required)
 		}
@@ -106,8 +106,8 @@ func TestCursorAgentReachableRecordedContextAndOpaqueTool(t *testing.T) {
 			}
 		}
 	}
-	if len(b.Assets) != 2 || !strings.Contains(strings.Join(b.Warnings, " "), "protobuf") {
-		t.Fatal("image/tool bytes or opaque-record warning missing", b.Warnings)
+	if len(b.Assets) != 1 || !strings.Contains(strings.Join(b.Warnings, " "), "protobuf") {
+		t.Fatal("image bytes or protobuf-schema warning missing", b.Warnings)
 	}
 	if b.Sessions[0].ID != "p" || b.Sessions[0].Title != "Synthetic work" || b.Sessions[0].Source != "cursor-agent" {
 		t.Fatal("wrong whitelisted metadata", b.Sessions[0])
