@@ -45,3 +45,11 @@ func TestWizardHidesEmptyNativeRecordsAndSubagents(t *testing.T) {
 		t.Fatal("empty records or children offered as conversations", c)
 	}
 }
+
+func TestWizardKeepsImageOnlyCatalogConversations(t *testing.T) {
+	b := &drain.Bundle{Sessions: []drain.Session{{ID: "p", Source: "claude", Events: []drain.Event{{Role: "user", Kind: "preview", Blocks: []drain.Block{{Type: "image", MIME: "image/png"}}}}}}}
+	c := wizardSessionChoices(b)
+	if len(c) != 1 || c[0].ID != "p" {
+		t.Fatal("image-only conversation hidden", c)
+	}
+}

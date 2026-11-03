@@ -45,6 +45,14 @@ unless you explicitly provide an external --rewrite-command or --describe-comman
 // loadInput combines native stores before selection so that archived sessions
 // and subagents remain reachable even when they live in different stores.
 func loadInput(source, input, id string) (*drain.Bundle, error) {
+	return loadDiscoveredInput(source, input, id, false)
+}
+
+func loadCatalogInput(source string) (*drain.Bundle, error) {
+	return loadDiscoveredInput(source, "", "", true)
+}
+
+func loadDiscoveredInput(source, input, id string, catalog bool) (*drain.Bundle, error) {
 	if input != "" {
 		return drain.LoadSelected(source, input, id)
 	}
@@ -91,8 +99,22 @@ func loadInput(source, input, id string) (*drain.Bundle, error) {
 			failures = append(failures, fmt.Sprintf("%s: %v", path, err))
 			continue
 		}
-		part, err := drain.Load(source, path)
+		var part *drain.Bundle
+		var err error
+		if catalog && claudeSource {
+			part, err = drain.CatalogClaude(path)
+			if err == nil && source == "claude-desktop" {
+				for i := range part.Sessions {
+					part.Sessions[i].Source = "claude-desktop"
+				}
+			}
+		} else {
+			part, err = drain.LoadSelected(source, path, id)
+		}
 		if err != nil {
+			if id != "" && strings.Contains(err.Error(), fmt.Sprintf("session %q not found", id)) {
+				continue
+			}
 			// Empty application directories can exist before the first chat.
 			if !strings.HasPrefix(err.Error(), "no sessions found in ") {
 				failures = append(failures, fmt.Sprintf("%s: %v", path, err))

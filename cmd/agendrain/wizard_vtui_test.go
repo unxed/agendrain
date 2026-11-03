@@ -176,3 +176,65 @@ func TestVTUIWizardBackKeyboardPreservesValues(t *testing.T) {
 		t.Fatalf("Ctrl+C = %v", err)
 	}
 }
+
+func TestVTUIWizardBusyWaitsForCanceledRead(t *testing.T) {
+	for _, key := range []*vtinput.InputEvent{wizardKey(vtinput.VK_ESCAPE), {Type: vtinput.KeyEventType, KeyDown: true, VirtualKeyCode: 'C', ControlKeyState: vtinput.LeftCtrlPressed}, wizardKey(vtinput.VK_RETURN)} {
+		u := silentWizard(t)
+		release := make(chan struct{})
+		completed := false
+		err := u.Busy("Read", "Reading local history…", func() error {
+			u.fm.PostTask(func() {
+				dialog := u.fm.GetTopFrame().(*wizardModal)
+				vtui.AssertLayout(t, dialog.Window)
+				if dialog.ShowClose {
+					t.Error("busy modal has close icon")
+				}
+				cancel := dialog.onCancel
+				dialog.onCancel = func() {
+					cancel()
+					if dialog.IsDone() {
+						t.Error("cancel closed modal before worker completed")
+					}
+					foundFinishing := false
+					for _, child := range dialog.GetChildren() {
+						if label, ok := child.(*vtui.Text); ok && strings.Contains(label.GetText(), uiText("Завершаем текущее чтение", "Finishing current read")) {
+							foundFinishing = true
+						}
+					}
+					if !foundFinishing {
+						t.Error("cancel did not show finishing-read status")
+					}
+					close(release)
+				}
+				for _, child := range dialog.GetChildren() {
+					if button, ok := child.(*vtui.Button); ok {
+						button.OnClick = dialog.onCancel
+					}
+				}
+				u.fm.InjectEvents([]*vtinput.InputEvent{key})
+			})
+			<-release
+			completed = true
+			return nil
+		})
+		if !completed || !errors.Is(err, errWizardCanceled) {
+			t.Fatalf("completed %v, error %v", completed, err)
+		}
+		if _, busy := u.fm.GetTopFrame().(*wizardModal); busy {
+			t.Fatal("busy modal remained on stack")
+		}
+	}
+}
+
+func TestVTUIWizardBusyReturnsWorkResult(t *testing.T) {
+	u := silentWizard(t)
+	failure := errors.New("read failure")
+	for _, want := range []error{nil, failure} {
+		if got := u.Busy("Read", "Reading local history…", func() error { return want }); !errors.Is(got, want) {
+			t.Fatalf("Busy = %v, want %v", got, want)
+		}
+		if _, busy := u.fm.GetTopFrame().(*wizardModal); busy {
+			t.Fatal("busy modal remained on stack")
+		}
+	}
+}

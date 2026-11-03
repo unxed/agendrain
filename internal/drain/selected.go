@@ -122,6 +122,24 @@ func LoadSelected(source, input, id string) (*Bundle, error) {
 	if id == "" {
 		return Load(source, input)
 	}
+	if source == "claude" || source == "claude-code" {
+		return loadSelectedClaude(input, id)
+	}
+	if source == "claude-desktop" {
+		info, err := os.Stat(input)
+		_, official := os.Stat(filepath.Join(input, "conversations.json"))
+		if err == nil && ((info.IsDir() && official != nil) || strings.HasSuffix(input, ".jsonl") || strings.HasSuffix(input, ".jsonl.zst")) {
+			b, err := loadSelectedClaude(input, id)
+			if err != nil {
+				return nil, err
+			}
+			for i := range b.Sessions {
+				b.Sessions[i].Source = "claude-desktop"
+			}
+			b.warn("Desktop Code/Cowork: importing recorded local agent logs; cloud-only conversations require an offline data export")
+			return b, nil
+		}
+	}
 	if source == "" || source == "auto" {
 		// Auto-detection normally examines the entire JSONL. Recognize a Codex
 		// header first so selection does not accidentally decode unrelated data.

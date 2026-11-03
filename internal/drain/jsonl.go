@@ -189,9 +189,17 @@ func claudeUUID(name string) bool {
 }
 
 func (b *Bundle) claude(input string) error {
-	ps, err := logPaths(input)
+	ps, root, err := claudePaths(input)
 	if err != nil {
 		return err
+	}
+	return b.claudeFiles(input, root, ps)
+}
+
+func claudePaths(input string) ([]string, string, error) {
+	ps, err := logPaths(input)
+	if err != nil {
+		return nil, "", err
 	}
 	root := input
 	if i, e := os.Stat(input); e == nil && !i.IsDir() {
@@ -200,13 +208,13 @@ func (b *Bundle) claude(input string) error {
 		if i, e := os.Stat(filepath.Join(child, "subagents")); e == nil && i.IsDir() {
 			extra, e := logPaths(filepath.Join(child, "subagents"))
 			if e != nil {
-				return e
+				return nil, "", e
 			}
 			ps = append(ps, extra...)
 		}
 		legacy, e := filepath.Glob(filepath.Join(filepath.Dir(input), "agent-*.jsonl"))
 		if e != nil {
-			return e
+			return nil, "", e
 		}
 		for _, p := range legacy {
 			if p != input {
@@ -214,6 +222,10 @@ func (b *Bundle) claude(input string) error {
 			}
 		}
 	}
+	return ps, root, nil
+}
+
+func (b *Bundle) claudeFiles(input, root string, ps []string) error {
 	byID := map[string]int{}
 	// Only matching explicit IDs may merge distinct transcript files. A
 	// fallback spelling can collide with an explicit ID, even with a namespace.

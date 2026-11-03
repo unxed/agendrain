@@ -184,6 +184,12 @@ func wizardSessionChoices(b *drain.Bundle) []wizardChoice {
 }
 
 func wizardBlockText(block drain.Block) string {
+	if block.Type == "image" {
+		return uiText("[изображение]", "[image]")
+	}
+	if block.Type == "file" {
+		return uiText("Файл: ", "File: ") + wizardProject(block.Path)
+	}
 	if block.Type == "text" {
 		return block.Text
 	}
@@ -287,6 +293,15 @@ func wizardRemember(ui wizardUI, id string) {
 	}
 }
 
+func wizardWork(ui wizardUI, title, text string, work func() error) error {
+	if busy, ok := ui.(interface {
+		Busy(string, string, func() error) error
+	}); ok {
+		return busy.Busy(title, text, work)
+	}
+	return work()
+}
+
 func wizardOptions(format string, checked map[string]bool) []wizardOption {
 	options := []wizardOption{
 		{ID: "compact", Label: uiText("Сжать контекст: убрать точные повторы", "Compact context: remove exact duplicates"), Detail: uiText("Формулировки требований и решений сохраняются, повторы заменяются ссылками", "Keep original requirements and decisions; replace exact duplicates with references")},
@@ -341,11 +356,17 @@ func runWizard(ui wizardUI, out io.Writer) error {
 			stage = 1
 		case 1:
 			if catalog == nil {
-				var err error
-				if environment.ID == "codex" {
-					catalog, err = drain.CatalogCodex("")
-				} else {
-					catalog, err = loadInput(environment.ID, "", "")
+				err := wizardWork(ui, environment.Title, uiText("Читаю список диалогов…", "Reading conversations…"), func() error {
+					var err error
+					if environment.ID == "codex" {
+						catalog, err = drain.CatalogCodex("")
+					} else {
+						catalog, err = loadCatalogInput(environment.ID)
+					}
+					return err
+				})
+				if errors.Is(err, errWizardCanceled) {
+					return err
 				}
 				if err != nil {
 					if e := ui.Message(uiText("Не удалось прочитать историю", "Could not read history"), fmt.Sprintf("%s: %v", environment.Title, err)); e != nil && !errors.Is(e, errWizardBack) {
@@ -485,14 +506,19 @@ func runWizard(ui wizardUI, out io.Writer) error {
 			if format.ID == "md-image-zip" {
 				o.ImageArchive = strings.TrimSuffix(destination, filepath.Ext(destination)) + "_images.zip"
 			}
-			b, err := loadInput(environment.ID, "", selected.ID)
+			var b *drain.Bundle
+			err = wizardWork(ui, environment.Title, uiText("Готовлю выбранный диалог и его субагентов…", "Preparing the selected conversation and its subagents…"), func() error {
+				var err error
+				b, err = loadInput(environment.ID, "", selected.ID)
+				if err != nil {
+					return err
+				}
+				if err = b.Select(selected.ID); err != nil {
+					return err
+				}
+				return drain.Prepare(b, o)
+			})
 			if err != nil {
-				return err
-			}
-			if err := b.Select(selected.ID); err != nil {
-				return err
-			}
-			if err := drain.Prepare(b, o); err != nil {
 				return err
 			}
 			if len(b.Warnings) > 0 {

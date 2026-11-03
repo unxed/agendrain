@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 
 	"github.com/unxed/vtinput"
@@ -27,8 +28,9 @@ func (u *vtuiWizard) SetInitialSelection(id string) { u.nextID = id }
 
 type wizardModal struct {
 	*vtui.Window
-	onHelp  func()
-	onFocus func()
+	onHelp   func()
+	onFocus  func()
+	onCancel func()
 }
 
 func (d *wizardModal) ProcessKey(e *vtinput.InputEvent) bool {
@@ -38,8 +40,12 @@ func (d *wizardModal) ProcessKey(e *vtinput.InputEvent) bool {
 			return true
 		}
 		ctrl := e.ControlKeyState&(vtinput.LeftCtrlPressed|vtinput.RightCtrlPressed) != 0
-		if ctrl && (e.VirtualKeyCode == 'C' || e.Char == 'c' || e.Char == 3) {
-			d.Close()
+		if (ctrl && (e.VirtualKeyCode == 'C' || e.Char == 'c' || e.Char == 3)) || (e.VirtualKeyCode == vtinput.VK_ESCAPE && d.onCancel != nil) {
+			if d.onCancel != nil {
+				d.onCancel()
+			} else {
+				d.Close()
+			}
 			return true
 		}
 	}
@@ -155,6 +161,73 @@ func (u *vtuiWizard) Input(title, label, initial string) (string, error) {
 
 func (u *vtuiWizard) Message(title, text string) error {
 	return u.show(u.messageDialog(title, text))
+}
+
+// Busy keeps the terminal event loop on the calling goroutine while a local
+// read runs in the background. Cancellation waits for that read to finish so
+// callers can safely stop before starting any write or closing the terminal.
+func (u *vtuiWizard) Busy(title, text string, work func() error) error {
+	width := u.width()
+	dialog := u.modal(title, width, 10)
+	dialog.ShowClose = false
+	x, y, inner := dialog.X1+2, dialog.Y1, width-4
+	labels := []*vtui.Text{wizardLabel(dialog, x, y+2, inner, ""), wizardLabel(dialog, x, y+3, inner, "")}
+	canceled := false
+	dialog.onCancel = func() {
+		canceled = true
+		wizardDetail(labels, uiText("Завершаем текущее чтение…", "Finishing current read…"), inner)
+		u.fm.Redraw()
+	}
+	cancel := vtui.NewButton(0, y+7, uiText("Отмена", "Cancel"))
+	cancel.IsDefault = true
+	cancel.OnClick = dialog.onCancel
+	cancel.MoveRelative(dialog.X1+(width-(cancel.X2-cancel.X1+1))/2-cancel.X1, 0)
+	dialog.AddItem(cancel)
+	wizardDetail(labels, "| "+text, inner)
+	u.fm.Push(dialog)
+	defer u.fm.RemoveFrame(dialog)
+	u.fm.Redraw()
+	active := u.fm.Step(0)
+	if !active {
+		dialog.onCancel()
+	}
+	result := make(chan error, 1)
+	go func() { result <- work() }()
+	spinner := []string{"/", "—", `\`, "|"}
+	frame := 0
+	nextFrame := time.Now().Add(100 * time.Millisecond)
+	for {
+		select {
+		case err := <-result:
+			if canceled {
+				return errWizardCanceled
+			}
+			return err
+		default:
+		}
+		if active {
+			if !u.fm.Step(50 * time.Millisecond) {
+				dialog.onCancel()
+				active = false
+			}
+			if !canceled && !time.Now().Before(nextFrame) {
+				nextFrame = time.Now().Add(100 * time.Millisecond)
+				wizardDetail(labels, spinner[frame%len(spinner)]+" "+text, inner)
+				frame++
+				u.fm.Redraw()
+			}
+		} else {
+			// An input EOF must not let cleanup race the still-running read.
+			select {
+			case err := <-result:
+				if canceled {
+					return errWizardCanceled
+				}
+				return err
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+	}
 }
 
 func (u *vtuiWizard) width() int {
