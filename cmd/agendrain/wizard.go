@@ -313,6 +313,15 @@ func runWizard(ui wizardUI, out io.Writer) error {
 	if err := drain.Write(b, destination, o); err != nil {
 		return err
 	}
+	fullPath, err := filepath.Abs(destination)
+	if err != nil {
+		fullPath = destination
+	}
+	message := "Диалог сохранён:\n\n" + fullPath + "\n\nПередайте результат следующему агенту и попросите прочитать conversation.md."
+	if o.ImageArchive != "" {
+		message += "\n\nАрхив картинок: " + o.ImageArchive
+	}
+	_ = ui.Message("Готово", message)
 	fmt.Fprintf(out, "Saved %s (%d sessions)\n", destination, len(b.Sessions))
 	return nil
 }

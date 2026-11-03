@@ -89,6 +89,17 @@ func TestVTUIWizardMessageAndHelpLayouts(t *testing.T) {
 	}
 }
 
+func TestVTUIWizardOptionsFitSmallTerminal(t *testing.T) {
+	u := silentWizard(t)
+	u.fm.Screen().AllocBuf(60, 20)
+	options := []wizardOption{{Label: "Сжать контекст"}, {Label: "Скрыть модели"}, {Label: "Убрать картинки"}, {Label: "Описания файлов"}, {Label: "Полное содержимое"}, {Label: "Прочие вложения в base64"}}
+	dialog, _ := u.optionsDialog("Опции", options)
+	vtui.AssertLayout(t, dialog.Window)
+	if dialog.Y1 < 0 || dialog.Y2 >= 20 {
+		t.Fatalf("dialog outside terminal: %d..%d", dialog.Y1, dialog.Y2)
+	}
+}
+
 func TestVTUIWizardLabelsDoNotRenderTerminalControls(t *testing.T) {
 	got := wizardVisibleText("hello\x1b[31m\n\tworld\x00")
 	if strings.ContainsAny(got, "\x1b\n\t\x00") {
