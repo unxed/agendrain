@@ -72,10 +72,11 @@ func wizardTestHome(t *testing.T) string {
 	t.Helper()
 	d := t.TempDir()
 	for name, value := range map[string]string{
-		"HOME": d, "USERPROFILE": d,
+		"HOME": d, "USERPROFILE": d, "LC_ALL": "ru_RU.UTF-8",
 		"APPDATA": filepath.Join(d, "config"), "XDG_CONFIG_HOME": filepath.Join(d, "config"),
 		"XDG_DATA_HOME": filepath.Join(d, "data"), "CODEX_HOME": filepath.Join(d, "codex"),
 		"CLAUDE_CONFIG_DIR": filepath.Join(d, "claude"), "OPENCODE_DB": filepath.Join(d, "missing.db"),
+		"CURSOR_CONFIG_DIR": filepath.Join(d, "cursor-agent"),
 	} {
 		t.Setenv(name, value)
 	}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -15,8 +16,14 @@ import (
 // vtuiWizard owns one terminal session; each prompt only changes its modal
 // dialog. Keeping the reader alive preserves input between wizard steps.
 type vtuiWizard struct {
-	fm *vtui.FrameManagerType
+	fm          *vtui.FrameManagerType
+	backEnabled bool
+	nextID      string
 }
+
+func (u *vtuiWizard) SetBackEnabled(enabled bool) { u.backEnabled = enabled }
+
+func (u *vtuiWizard) SetInitialSelection(id string) { u.nextID = id }
 
 type wizardModal struct {
 	*vtui.Window
@@ -53,18 +60,18 @@ func (d *wizardModal) ProcessMouse(e *vtinput.InputEvent) bool {
 
 func newVTUIWizard() (wizardUI, func(), error) {
 	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
-		return nil, nil, fmt.Errorf("интерактивный мастер требует терминал; используйте agendrain --help для командной строки")
+		return nil, nil, errors.New(uiText("интерактивный мастер требует терминал; используйте agendrain --help для командной строки", "the interactive wizard requires a terminal; use agendrain --help for command-line options"))
 	}
 	width, height, err := term.GetSize(int(os.Stdin.Fd()))
 	if err != nil {
-		return nil, nil, fmt.Errorf("размер терминала: %w", err)
+		return nil, nil, fmt.Errorf(uiText("размер терминала: %w", "terminal size: %w"), err)
 	}
 	if width < 60 || height < 20 {
-		return nil, nil, fmt.Errorf("для мастера нужен терминал не меньше 60×20 (сейчас %d×%d)", width, height)
+		return nil, nil, fmt.Errorf(uiText("для мастера нужен терминал не меньше 60×20 (сейчас %d×%d)", "the wizard requires a terminal of at least 60×20 (currently %d×%d)"), width, height)
 	}
 	restore, err := vtui.PrepareTerminal()
 	if err != nil {
-		return nil, nil, fmt.Errorf("подготовка терминала: %w", err)
+		return nil, nil, fmt.Errorf(uiText("подготовка терминала: %w", "preparing terminal: %w"), err)
 	}
 	previous := vtui.FrameManager
 	fm := vtui.NewFrameManager()
@@ -104,6 +111,9 @@ func (u *vtuiWizard) show(dialog *wizardModal) error {
 			return errWizardCanceled
 		}
 	}
+	if dialog.ExitCode == 2 {
+		return errWizardBack
+	}
 	if dialog.ExitCode != 1 {
 		return errWizardCanceled
 	}
@@ -112,7 +122,7 @@ func (u *vtuiWizard) show(dialog *wizardModal) error {
 
 func (u *vtuiWizard) Select(title, help string, choices []wizardChoice) (int, error) {
 	if len(choices) == 0 {
-		return 0, fmt.Errorf("нет доступных вариантов")
+		return 0, errors.New(uiText("нет доступных вариантов", "no choices available"))
 	}
 	dialog, list := u.selectDialog(title, help, choices)
 	if err := u.show(dialog); err != nil {
@@ -123,22 +133,24 @@ func (u *vtuiWizard) Select(title, help string, choices []wizardChoice) (int, er
 
 func (u *vtuiWizard) Options(title string, options []wizardOption) ([]wizardOption, error) {
 	dialog, boxes := u.optionsDialog(title, options)
-	if err := u.show(dialog); err != nil {
+	err := u.show(dialog)
+	if err != nil && !errors.Is(err, errWizardBack) {
 		return nil, err
 	}
 	result := append([]wizardOption(nil), options...)
 	for i, box := range boxes {
 		result[i].Checked = box.State == 1
 	}
-	return result, nil
+	return result, err
 }
 
 func (u *vtuiWizard) Input(title, label, initial string) (string, error) {
 	dialog, edit := u.inputDialog(title, label, initial)
-	if err := u.show(dialog); err != nil {
+	err := u.show(dialog)
+	if err != nil && !errors.Is(err, errWizardBack) {
 		return "", err
 	}
-	return edit.GetText(), nil
+	return edit.GetText(), err
 }
 
 func (u *vtuiWizard) Message(title, text string) error {
@@ -194,30 +206,37 @@ func wizardDetail(labels []*vtui.Text, text string, width int) {
 	}
 }
 
-func wizardButtons(dialog *wizardModal, y int, accept string, cancel bool) {
+func wizardButtons(dialog *wizardModal, y int, accept string, cancel, backEnabled bool) {
 	width := dialog.X2 - dialog.X1 + 1
 	ok := vtui.NewButton(0, y, accept)
 	ok.IsDefault = true
 	ok.OnClick = func() { dialog.SetExitCode(1) }
-	buttonWidth := ok.X2 - ok.X1 + 1
-	var back *vtui.Button
+	buttons := []*vtui.Button{ok}
+	if backEnabled {
+		back := vtui.NewButton(0, y, uiText("Назад", "Back"))
+		back.OnClick = func() { dialog.SetExitCode(2) }
+		buttons = append(buttons, back)
+	}
 	if cancel {
-		back = vtui.NewButton(0, y, "Отмена")
-		back.OnClick = func() { dialog.Close() }
-		buttonWidth += 3 + back.X2 - back.X1 + 1
+		cancelButton := vtui.NewButton(0, y, uiText("Отмена", "Cancel"))
+		cancelButton.OnClick = func() { dialog.Close() }
+		buttons = append(buttons, cancelButton)
+	}
+	buttonWidth := (len(buttons) - 1) * 3
+	for _, button := range buttons {
+		buttonWidth += button.X2 - button.X1 + 1
 	}
 	x := dialog.X1 + (width-buttonWidth)/2
-	ok.MoveRelative(x-ok.X1, 0)
-	dialog.AddItem(ok)
-	if back != nil {
-		back.MoveRelative(ok.X2+4-back.X1, 0)
-		dialog.AddItem(back)
+	for _, button := range buttons {
+		button.MoveRelative(x-button.X1, 0)
+		dialog.AddItem(button)
+		x = button.X2 + 4
 	}
 }
 
 func (u *vtuiWizard) help(dialog *wizardModal, text string) {
 	dialog.onHelp = func() {
-		u.fm.Push(u.messageDialog("Справка", text+"\n\nСтрелки — выбор. Tab — переход к кнопкам. Enter — продолжить. Пробел — переключить флажок. Esc — отмена. Ctrl+C — выход."))
+		u.fm.Push(u.messageDialog(uiText("Справка", "Help"), text+uiText("\n\nСтрелки — выбор. Tab — переход к кнопкам. Enter — продолжить. Пробел — переключить флажок. Esc — отмена. Ctrl+C — выход.", "\n\nArrows select. Tab moves to buttons. Enter continues. Space toggles a checkbox. Esc cancels. Ctrl+C exits.")))
 	}
 }
 
@@ -242,12 +261,20 @@ func (u *vtuiWizard) selectDialog(title, help string, choices []wizardChoice) (*
 		}
 	}
 	list.OnAction = func(int) { dialog.SetExitCode(1) }
-	list.SetSelectPos(0)
-	if len(choices) > 0 {
-		list.OnSelect(0)
+	selected := 0
+	for i, choice := range choices {
+		if u.nextID != "" && choice.ID == u.nextID {
+			selected = i
+			break
+		}
 	}
-	wizardLabel(dialog, x, y+height-5, inner, "↑↓ — выбор · Enter — далее · Esc — отмена · F1 — справка")
-	wizardButtons(dialog, y+height-3, "Далее", true)
+	u.nextID = ""
+	list.SetSelectPos(selected)
+	if len(choices) > 0 {
+		list.OnSelect(selected)
+	}
+	wizardLabel(dialog, x, y+height-5, inner, uiText("↑↓ — выбор · Enter — далее · Esc — отмена · F1 — справка", "↑↓ select · Enter next · Esc cancel · F1 help"))
+	wizardButtons(dialog, y+height-3, uiText("Далее", "Next"), true, u.backEnabled)
 	u.help(dialog, help)
 	return dialog, list
 }
@@ -261,7 +288,7 @@ func (u *vtuiWizard) optionsDialog(title string, options []wizardOption) (*wizar
 	}
 	dialog := u.modal(title, width, height)
 	x, y, inner := dialog.X1+2, dialog.Y1, width-4
-	wizardLabel(dialog, x, y+2, inner, "↑↓ / Tab — переход · Пробел — флажок · F1 — справка")
+	wizardLabel(dialog, x, y+2, inner, uiText("↑↓ / Tab — переход · Пробел — флажок · F1 — справка", "↑↓ / Tab move · Space toggle · F1 help"))
 	boxes := make([]*vtui.Checkbox, len(options))
 	for i, option := range options {
 		label := vtui.TruncateString(wizardVisibleText(option.Label), inner-4, "…")
@@ -284,7 +311,7 @@ func (u *vtuiWizard) optionsDialog(title string, options []wizardOption) (*wizar
 			}
 		}
 	}
-	wizardButtons(dialog, y+height-3, "Далее", true)
+	wizardButtons(dialog, y+height-3, uiText("Далее", "Next"), true, u.backEnabled)
 	var help strings.Builder
 	for _, option := range options {
 		fmt.Fprintf(&help, "%s: %s\n\n", option.Label, option.Detail)
@@ -301,8 +328,8 @@ func (u *vtuiWizard) inputDialog(title, label, initial string) (*wizardModal, *v
 	wizardDetail(labels, label, inner)
 	edit := vtui.NewEdit(x, y+5, inner, initial)
 	dialog.AddItem(edit)
-	wizardLabel(dialog, x, y+7, inner, "Enter — сохранить значение · Esc — отмена · F1 — справка")
-	wizardButtons(dialog, y+10, "Далее", true)
+	wizardLabel(dialog, x, y+7, inner, uiText("Enter — сохранить значение · Esc — отмена · F1 — справка", "Enter save value · Esc cancel · F1 help"))
+	wizardButtons(dialog, y+10, uiText("Далее", "Next"), true, u.backEnabled)
 	u.help(dialog, label)
 	return dialog, edit
 }
@@ -322,7 +349,7 @@ func (u *vtuiWizard) messageDialog(title, text string) *wizardModal {
 	list := vtui.NewListBox(x, y+2, inner, height-9, lines)
 	list.OnAction = func(int) { dialog.SetExitCode(1) }
 	dialog.AddItem(list)
-	wizardLabel(dialog, x, y+height-5, inner, "↑↓ / PgUp / PgDn — прокрутка · Enter — закрыть")
-	wizardButtons(dialog, y+height-3, "Закрыть", false)
+	wizardLabel(dialog, x, y+height-5, inner, uiText("↑↓ / PgUp / PgDn — прокрутка · Enter — закрыть", "↑↓ / PgUp / PgDn scroll · Enter close"))
+	wizardButtons(dialog, y+height-3, uiText("Закрыть", "Close"), false, false)
 	return dialog
 }

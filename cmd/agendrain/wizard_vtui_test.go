@@ -106,3 +106,73 @@ func TestVTUIWizardLabelsDoNotRenderTerminalControls(t *testing.T) {
 		t.Fatalf("unsafe label %q", got)
 	}
 }
+
+func TestVTUIWizardBackButtons(t *testing.T) {
+	for _, size := range [][2]int{{60, 20}, {80, 25}} {
+		for _, locale := range []string{"en_US", "ru_RU"} {
+			t.Run(locale, func(t *testing.T) {
+				t.Setenv("LC_ALL", locale)
+				u := silentWizard(t)
+				u.fm.Screen().AllocBuf(size[0], size[1])
+				u.SetBackEnabled(true)
+				selection, _ := u.selectDialog("Choose", "Help", []wizardChoice{{Title: "First"}})
+				options, _ := u.optionsDialog("Options", []wizardOption{{Label: "One"}, {Label: "Two"}, {Label: "Three"}, {Label: "Four"}, {Label: "Five"}, {Label: "Six"}})
+				input, _ := u.inputDialog("Input", "Value", "default")
+				for _, dialog := range []*wizardModal{selection, options, input} {
+					vtui.AssertLayout(t, dialog.Window)
+					var back *vtui.Button
+					for _, child := range dialog.GetChildren() {
+						if b, ok := child.(*vtui.Button); ok && strings.Contains(b.GetText(), uiText("Назад", "Back")) {
+							back = b
+						}
+					}
+					if back == nil {
+						t.Fatal("Back button missing")
+					}
+					back.OnClick()
+					if err := u.show(dialog); !errors.Is(err, errWizardBack) {
+						t.Fatalf("Back returned %v", err)
+					}
+				}
+				for _, dialog := range []*wizardModal{u.messageDialog("Message", "Done")} {
+					for _, child := range dialog.GetChildren() {
+						if b, ok := child.(*vtui.Button); ok && strings.Contains(b.GetText(), uiText("Назад", "Back")) {
+							t.Fatal("Message has Back")
+						}
+					}
+				}
+				u.SetBackEnabled(false)
+				first, _ := u.selectDialog("First", "", []wizardChoice{{Title: "First"}})
+				for _, child := range first.GetChildren() {
+					if b, ok := child.(*vtui.Button); ok && strings.Contains(b.GetText(), uiText("Назад", "Back")) {
+						t.Fatal("First step has Back")
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestVTUIWizardBackKeyboardPreservesValues(t *testing.T) {
+	u := silentWizard(t)
+	u.SetBackEnabled(true)
+	u.fm.InjectEvents([]*vtinput.InputEvent{wizardKey(vtinput.VK_SPACE), wizardKey(vtinput.VK_TAB), wizardKey(vtinput.VK_TAB), wizardKey(vtinput.VK_RETURN)})
+	options, err := u.Options("Options", []wizardOption{{Label: "Toggle"}})
+	if !errors.Is(err, errWizardBack) || len(options) != 1 || !options[0].Checked {
+		t.Fatalf("Back options = %#v, %v", options, err)
+	}
+	u.fm.InjectEvents([]*vtinput.InputEvent{wizardKey(vtinput.VK_TAB), wizardKey(vtinput.VK_TAB), wizardKey(vtinput.VK_RETURN)})
+	value, err := u.Input("Input", "Value", "saved value")
+	if !errors.Is(err, errWizardBack) || value != "saved value" {
+		t.Fatalf("Back input = %q, %v", value, err)
+	}
+	u.SetInitialSelection("second")
+	dialog, list := u.selectDialog("Selection", "", []wizardChoice{{ID: "first", Title: "First"}, {ID: "second", Title: "Second"}})
+	if list.SelectPos != 1 {
+		t.Fatalf("restored selection = %d", list.SelectPos)
+	}
+	u.fm.InjectEvents([]*vtinput.InputEvent{{Type: vtinput.KeyEventType, KeyDown: true, VirtualKeyCode: 'C', ControlKeyState: vtinput.LeftCtrlPressed}})
+	if err := u.show(dialog); !errors.Is(err, errWizardCanceled) {
+		t.Fatalf("Ctrl+C = %v", err)
+	}
+}

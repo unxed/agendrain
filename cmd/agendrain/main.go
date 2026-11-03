@@ -390,7 +390,7 @@ func launchWizard(out io.Writer) error {
 	var result bytes.Buffer
 	err = runWizard(ui, &result)
 	if err != nil && !errors.Is(err, errWizardCanceled) {
-		_ = ui.Message("Ошибка экспорта", err.Error())
+		_ = ui.Message(uiText("Ошибка экспорта", "Export error"), err.Error())
 	}
 	cleanup()
 	if err != nil {

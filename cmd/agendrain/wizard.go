@@ -29,15 +29,17 @@ type wizardUI interface {
 }
 
 var errWizardCanceled = errors.New("wizard canceled")
+var errWizardBack = errors.New("wizard back")
 
 func wizardEnvironments() []wizardChoice {
 	var choices []wizardChoice
 	for _, client := range []wizardChoice{
-		{ID: "codex", Title: "Codex (Desktop и консоль)"},
-		{ID: "claude", Title: "Claude Code (консоль)"},
-		{ID: "claude-desktop", Title: "Claude Desktop (локальные Code/Cowork)"},
+		{ID: "codex", Title: uiText("Codex (Desktop и консоль)", "Codex (Desktop and CLI)")},
+		{ID: "claude", Title: uiText("Claude Code (консоль)", "Claude Code (CLI)")},
+		{ID: "claude-desktop", Title: uiText("Claude Desktop (локальные Code/Cowork)", "Claude Desktop (local Code/Cowork)")},
 		{ID: "opencode", Title: "OpenCode"},
-		{ID: "cursor", Title: "Cursor"},
+		{ID: "cursor", Title: "Cursor (IDE)"},
+		{ID: "cursor-agent", Title: uiText("Cursor Agent (консоль)", "Cursor Agent (CLI)")},
 		{ID: "vtvibe", Title: "vtvibe (f4)"},
 	} {
 		candidates := drain.Discover(client.ID)
@@ -135,7 +137,7 @@ func wizardSessionChoices(b *drain.Bundle) []wizardChoice {
 			title = wizardProject(session.CWD)
 		}
 		if title == "" {
-			title = "Диалог"
+			title = uiText("Без названия", "Untitled")
 		}
 		var detail []string
 		if session.CWD != "" {
@@ -191,149 +193,258 @@ func wizardDefaultDestination(session drain.Session, format string) string {
 	return prefix + "-" + time.Now().UTC().Format("20060102T150405Z") + extension
 }
 
+func wizardBackEnabled(ui wizardUI, enabled bool) {
+	if nav, ok := ui.(interface{ SetBackEnabled(bool) }); ok {
+		nav.SetBackEnabled(enabled)
+	}
+}
+
+func wizardRemember(ui wizardUI, id string) {
+	if nav, ok := ui.(interface{ SetInitialSelection(string) }); ok {
+		nav.SetInitialSelection(id)
+	}
+}
+
+func wizardOptions(format string, checked map[string]bool) []wizardOption {
+	options := []wizardOption{
+		{ID: "compact", Label: uiText("Сжать контекст: убрать точные повторы", "Compact context: remove exact duplicates"), Detail: uiText("Формулировки требований и решений сохраняются, повторы заменяются ссылками", "Keep original requirements and decisions; replace exact duplicates with references")},
+		{ID: "strip-models", Label: uiText("Скрыть названия моделей", "Remove model names"), Detail: uiText("Удалить имена моделей из текста и метаданных", "Remove model names from text and metadata")},
+		{ID: "images-omit", Label: uiText("Убрать картинки", "Omit images"), Detail: uiText("Вместо картинок останутся отметки об их исключении", "Replace images with omission markers")},
+		{ID: "files-summary", Label: uiText("Добавить краткие описания файлов", "Include brief file descriptions"), Detail: uiText("Только файлы внутри выбранной вами разрешённой папки", "Only files inside a directory you explicitly allow")},
+		{ID: "files-full", Label: uiText("Добавить содержимое файлов целиком", "Include full file contents"), Detail: uiText("Только файлы внутри выбранной вами разрешённой папки", "Only files inside a directory you explicitly allow")},
+	}
+	if format != "zip" {
+		options = append(options, wizardOption{ID: "base64", Label: uiText("Добавить прочие вложения в base64", "Include other attachments as base64"), Detail: uiText("Для вложений, которые не являются текстом или картинками; увеличивает размер", "Include other binary attachments; increases output size")})
+	}
+	for i := range options {
+		options[i].Checked = checked[options[i].ID]
+	}
+	return options
+}
+
 func runWizard(ui wizardUI, out io.Writer) error {
 	environments := wizardEnvironments()
 	if len(environments) == 0 {
-		text := "No local agent stores were found. For a copied store, use agendrain export --source CLIENT --input PATH --output handoff.zip."
-		if err := ui.Message("Локальная история не найдена", text); err != nil {
+		text := uiText("Локальная история агентов не найдена. Для скопированной истории: agendrain export --source CLIENT --input PATH --output handoff.zip.", "No local agent stores were found. For a copied store, use agendrain export --source CLIENT --input PATH --output handoff.zip.")
+		if err := ui.Message(uiText("Локальная история не найдена", "No local history found"), text); err != nil {
 			return err
 		}
 		return errors.New(text)
 	}
-	environment, err := wizardSelect(ui, "Откуда перенести диалог?", "Показаны среды с найденной локальной историей.", environments)
-	if err != nil {
-		return err
-	}
+	var environment, selected, format wizardChoice
 	var catalog *drain.Bundle
-	if environment.ID == "codex" {
-		catalog, err = drain.CatalogCodex("")
-	} else {
-		catalog, err = loadInput(environment.ID, "", "")
-	}
-	if err != nil {
-		return fmt.Errorf("cannot list local %s conversations: %w", environment.Title, err)
-	}
-	choices := wizardSessionChoices(catalog)
-	if len(choices) == 0 {
-		return fmt.Errorf("no root conversations found in %s; inspect a copied store with --input PATH", environment.Title)
-	}
-	selected, err := wizardSelect(ui, "Выберите сессию", "Сначала недавние сессии. Истории субагентов включаются автоматически.", choices)
-	if err != nil {
-		return err
-	}
-	format, err := wizardSelect(ui, "Формат сохранения", "По умолчанию — один ZIP со всей доступной историей и вложениями.", []wizardChoice{
-		{ID: "zip", Title: "ZIP — один файл (рекомендуется)", Detail: "Основной диалог, отдельные истории субагентов, метаданные и вложения"},
-		{ID: "md-images", Title: "Markdown + папка картинок", Detail: "Один длинный документ и пронумерованные картинки для AI Studio"},
-		{ID: "md-image-zip", Title: "Markdown + архив картинок", Detail: "Два файла: длинный Markdown и ZIP с пронумерованными картинками"},
-	})
-	if err != nil {
-		return err
-	}
-	options := []wizardOption{
-		{ID: "compact", Label: "Сжать контекст: убрать точные повторы", Detail: "Формулировки требований и решений сохраняются, повторы заменяются ссылками"},
-		{ID: "strip-models", Label: "Скрыть названия моделей", Detail: "Удалить имена моделей из текста и метаданных"},
-		{ID: "images-omit", Label: "Убрать картинки", Detail: "Вместо картинок останутся отметки об их исключении"},
-		{ID: "files-summary", Label: "Добавить краткие описания файлов", Detail: "Только файлы внутри выбранной вами разрешённой папки"},
-		{ID: "files-full", Label: "Добавить содержимое файлов целиком", Detail: "Только файлы внутри выбранной вами разрешённой папки"},
-	}
-	if format.ID != "zip" {
-		options = append(options, wizardOption{ID: "base64", Label: "Добавить прочие вложения в base64", Detail: "Для вложений, которые не являются текстом или картинками; увеличивает размер"})
-	}
-	var checked map[string]bool
-	for {
-		options, err = ui.Options("Дополнительные опции", options)
-		if err != nil {
-			return err
-		}
-		checked = map[string]bool{}
-		for _, option := range options {
-			checked[option.ID] = option.Checked
-		}
-		if !checked["files-summary"] || !checked["files-full"] {
-			break
-		}
-		if err := ui.Message("Выберите один режим файлов", "Выберите краткие описания или полное содержимое файлов, но не оба режима сразу."); err != nil {
-			return err
-		}
-	}
 	var session drain.Session
-	for _, candidate := range catalog.Sessions {
-		if candidate.ID == selected.ID {
-			session = candidate
-			break
+	checked := map[string]bool{}
+	var allowedRoot, destination string
+	stage := 0
+	for {
+		wizardBackEnabled(ui, stage > 0)
+		switch stage {
+		case 0:
+			wizardRemember(ui, environment.ID)
+			choice, err := wizardSelect(ui, uiText("Откуда перенести диалог?", "Choose an environment"), uiText("Показаны среды с найденной локальной историей.", "Environments with local history are listed."), environments)
+			if errors.Is(err, errWizardBack) {
+				return errWizardCanceled
+			}
+			if err != nil {
+				return err
+			}
+			if choice.ID != environment.ID {
+				catalog = nil
+				selected = wizardChoice{}
+				allowedRoot = ""
+				destination = ""
+			}
+			environment = choice
+			stage = 1
+		case 1:
+			if catalog == nil {
+				var err error
+				if environment.ID == "codex" {
+					catalog, err = drain.CatalogCodex("")
+				} else {
+					catalog, err = loadInput(environment.ID, "", "")
+				}
+				if err != nil {
+					if e := ui.Message(uiText("Не удалось прочитать историю", "Could not read history"), fmt.Sprintf("%s: %v", environment.Title, err)); e != nil && !errors.Is(e, errWizardBack) {
+						return e
+					}
+					stage = 0
+					continue
+				}
+			}
+			choices := wizardSessionChoices(catalog)
+			if len(choices) == 0 {
+				if err := ui.Message(uiText("Нет доступных диалогов", "No conversations available"), fmt.Sprintf(uiText("В %s не найдены диалоги с доступными сообщениями. Пустые записи и субагенты отдельно не показываются.", "No conversations with available messages were found in %s. Empty records and subagents are not listed separately."), environment.Title)); err != nil && !errors.Is(err, errWizardBack) {
+					return err
+				}
+				stage = 0
+				continue
+			}
+			wizardRemember(ui, selected.ID)
+			choice, err := wizardSelect(ui, fmt.Sprintf(uiText("Сессии · %s", "Sessions · %s"), environment.Title), uiText("Сначала недавние диалоги. Субагенты включаются при экспорте.", "Recent conversations first. Subagents are included on export."), choices)
+			if errors.Is(err, errWizardBack) {
+				stage = 0
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if selected.ID != choice.ID {
+				allowedRoot = ""
+				destination = ""
+			}
+			selected = choice
+			for _, candidate := range catalog.Sessions {
+				if candidate.ID == selected.ID {
+					session = candidate
+					break
+				}
+			}
+			stage = 2
+		case 2:
+			wizardRemember(ui, format.ID)
+			choice, err := wizardSelect(ui, uiText("Формат сохранения", "Output format"), uiText("По умолчанию — один ZIP со всей доступной историей и вложениями.", "Default: one ZIP containing all available history and attachments."), []wizardChoice{
+				{ID: "zip", Title: uiText("ZIP — один файл (рекомендуется)", "ZIP — one file (recommended)"), Detail: uiText("Основной диалог, отдельные истории субагентов, метаданные и вложения", "Main conversation, linked subagent histories, metadata and attachments")},
+				{ID: "md-images", Title: uiText("Markdown + папка картинок", "Markdown + image folder"), Detail: uiText("Один длинный документ и пронумерованные картинки для AI Studio", "One long document and numbered images for AI Studio")},
+				{ID: "md-image-zip", Title: uiText("Markdown + архив картинок", "Markdown + image ZIP"), Detail: uiText("Два файла: длинный Markdown и ZIP с пронумерованными картинками", "Two files: a long Markdown document and a ZIP of numbered images")},
+			})
+			if errors.Is(err, errWizardBack) {
+				stage = 1
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if choice.ID != format.ID {
+				destination = ""
+			}
+			format = choice
+			stage = 3
+		case 3:
+			options, err := ui.Options(uiText("Дополнительные опции", "Export options"), wizardOptions(format.ID, checked))
+			for _, option := range options {
+				checked[option.ID] = option.Checked
+			}
+			if errors.Is(err, errWizardBack) {
+				stage = 2
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if checked["files-summary"] && checked["files-full"] {
+				if err := ui.Message(uiText("Выберите один режим файлов", "Choose one file mode"), uiText("Выберите краткие описания или полное содержимое файлов, но не оба режима сразу.", "Choose brief descriptions or full file contents, rather than both.")); err != nil && !errors.Is(err, errWizardBack) {
+					return err
+				}
+				continue
+			}
+			if checked["files-summary"] || checked["files-full"] {
+				stage = 4
+			} else {
+				stage = 5
+			}
+		case 4:
+			initial := allowedRoot
+			if initial == "" {
+				initial = session.CWD
+			}
+			value, err := ui.Input(uiText("Какие файлы можно прочитать?", "Which files may be read?"), uiText("Разрешённая папка", "Allowed directory"), initial)
+			allowedRoot = value
+			if errors.Is(err, errWizardBack) {
+				stage = 3
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			info, e := os.Stat(allowedRoot)
+			if strings.TrimSpace(allowedRoot) == "" || e != nil || !info.IsDir() {
+				if err := ui.Message(uiText("Нужна существующая папка", "Existing directory required"), uiText("Укажите существующую папку, внутри которой разрешено читать файлы.", "Choose an existing directory in which files may be read.")); err != nil && !errors.Is(err, errWizardBack) {
+					return err
+				}
+				continue
+			}
+			stage = 5
+		case 5:
+			if destination == "" {
+				destination = wizardDefaultDestination(session, format.ID)
+			}
+			value, err := ui.Input(uiText("Куда сохранить диалог?", "Save conversation"), uiText("Новый файл для сохранения", "New output file"), destination)
+			destination = value
+			if errors.Is(err, errWizardBack) {
+				if checked["files-summary"] || checked["files-full"] {
+					stage = 4
+				} else {
+					stage = 3
+				}
+				continue
+			}
+			if err != nil {
+				return err
+			}
+			if strings.TrimSpace(destination) == "" {
+				return errors.New(uiText("Укажите файл для сохранения", "Destination path is required"))
+			}
+			o := drain.Options{Format: "zip", Files: "none", Images: "keep", Compact: checked["compact"], StripModels: checked["strip-models"], Base64: format.ID != "zip" && checked["base64"]}
+			if format.ID != "zip" {
+				o.Format = "md"
+			}
+			if checked["images-omit"] {
+				o.Images = "omit"
+			}
+			if checked["files-summary"] || checked["files-full"] {
+				o.Files = "summary"
+				if checked["files-full"] {
+					o.Files = "full"
+				}
+				o.Roots = []string{allowedRoot}
+			}
+			if format.ID == "md-image-zip" {
+				o.ImageArchive = strings.TrimSuffix(destination, filepath.Ext(destination)) + "_images.zip"
+			}
+			b, err := loadInput(environment.ID, "", selected.ID)
+			if err != nil {
+				return err
+			}
+			if err := b.Select(selected.ID); err != nil {
+				return err
+			}
+			if err := drain.Prepare(b, o); err != nil {
+				return err
+			}
+			if len(b.Warnings) > 0 {
+				if err := ui.Message(uiText("Ограничения исходной истории", "Source history limitations"), strings.Join(b.Warnings, "\n")); err != nil {
+					if errors.Is(err, errWizardBack) {
+						continue
+					}
+					return err
+				}
+			}
+			if err := drain.Write(b, destination, o); err != nil {
+				return err
+			}
+			fullPath, err := filepath.Abs(destination)
+			if err != nil {
+				fullPath = destination
+			}
+			entry := "conversation.md"
+			if o.Format == "md" {
+				entry = filepath.Base(destination)
+			}
+			message := fmt.Sprintf(uiText("Диалог сохранён:\n\n%s\n\nПередайте результат следующему агенту и попросите прочитать %s.", "Conversation saved:\n\n%s\n\nGive the result to the next agent and ask it to read %s."), fullPath, entry)
+			if o.ImageArchive != "" {
+				message += uiText("\n\nАрхив картинок: ", "\n\nImage archive: ") + o.ImageArchive
+			} else if o.Format == "md" {
+				images := strings.TrimSuffix(fullPath, filepath.Ext(fullPath)) + "_images"
+				if info, e := os.Stat(images); e == nil && info.IsDir() {
+					message += uiText("\n\nТакже передайте папку картинок:\n", "\n\nAlso include the image folder:\n") + images
+				}
+			}
+			wizardBackEnabled(ui, false)
+			_ = ui.Message(uiText("Готово", "Done"), message)
+			fmt.Fprintf(out, "Saved %s (%d sessions)\n", destination, len(b.Sessions))
+			return nil
 		}
 	}
-	o := drain.Options{Format: "zip", Files: "none", Images: "keep", Compact: checked["compact"], StripModels: checked["strip-models"], Base64: format.ID != "zip" && checked["base64"]}
-	if format.ID != "zip" {
-		o.Format = "md"
-	}
-	if checked["images-omit"] {
-		o.Images = "omit"
-	}
-	if checked["files-summary"] || checked["files-full"] {
-		o.Files = "summary"
-		if checked["files-full"] {
-			o.Files = "full"
-		}
-		root, err := ui.Input("Какие файлы можно прочитать?", "Разрешённая папка", session.CWD)
-		if err != nil {
-			return err
-		}
-		if strings.TrimSpace(root) == "" {
-			return fmt.Errorf("local file inclusion requires an explicit allowed directory")
-		}
-		info, err := os.Stat(root)
-		if err != nil || !info.IsDir() {
-			return fmt.Errorf("allowed file root must be an existing directory: %s", root)
-		}
-		o.Roots = []string{root}
-	}
-	destination, err := ui.Input("Куда сохранить диалог?", "Новый файл для сохранения", wizardDefaultDestination(session, format.ID))
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(destination) == "" {
-		return fmt.Errorf("destination path is required")
-	}
-	if format.ID == "md-image-zip" {
-		o.ImageArchive = strings.TrimSuffix(destination, filepath.Ext(destination)) + "_images.zip"
-	}
-	b, err := loadInput(environment.ID, "", selected.ID)
-	if err != nil {
-		return err
-	}
-	if err := b.Select(selected.ID); err != nil {
-		return err
-	}
-	if err := drain.Prepare(b, o); err != nil {
-		return err
-	}
-	if len(b.Warnings) > 0 {
-		if err := ui.Message("Ограничения исходной истории", strings.Join(b.Warnings, "\n")); err != nil {
-			return err
-		}
-	}
-	if err := drain.Write(b, destination, o); err != nil {
-		return err
-	}
-	fullPath, err := filepath.Abs(destination)
-	if err != nil {
-		fullPath = destination
-	}
-	entry := "conversation.md"
-	if o.Format == "md" {
-		entry = filepath.Base(destination)
-	}
-	message := "Диалог сохранён:\n\n" + fullPath + "\n\nПередайте результат следующему агенту и попросите прочитать " + entry + "."
-	if o.ImageArchive != "" {
-		message += "\n\nАрхив картинок: " + o.ImageArchive
-	} else if o.Format == "md" {
-		images := strings.TrimSuffix(fullPath, filepath.Ext(fullPath)) + "_images"
-		if info, e := os.Stat(images); e == nil && info.IsDir() {
-			message += "\n\nТакже передайте папку картинок:\n" + images
-		}
-	}
-	_ = ui.Message("Готово", message)
-	fmt.Fprintf(out, "Saved %s (%d sessions)\n", destination, len(b.Sessions))
-	return nil
 }
