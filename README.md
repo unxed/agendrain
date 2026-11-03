@@ -19,17 +19,15 @@ agendrain keeps recorded messages, available instructions and context, tool call
 ## Install
 
 Prebuilt releases cover Linux, macOS and Windows on amd64 and arm64. Verify downloads against the release's `SHA256SUMS`.
-To install from source, use Go 1.26.6 or newer (required by `unxed/vtui`):
+To build from source, use Go 1.26.6 or newer (required by `unxed/vtui`):
 
 ```sh
-go install -tags vtui_noebiten,vtui_nogogpu,vtui_nococoa github.com/unxed/agendrain/cmd/agendrain@latest
-```
-
-Or build the checkout:
-
-```sh
+git clone https://github.com/unxed/agendrain.git
+cd agendrain
 go build -tags vtui_noebiten,vtui_nogogpu,vtui_nococoa ./cmd/agendrain
 ```
+
+Build from the checkout so Go honors its pinned dependency replacements. `go install ...@latest` cannot use a module containing these `replace` directives.
 
 ## Make a handoff
 
