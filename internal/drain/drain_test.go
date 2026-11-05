@@ -329,3 +329,14 @@ func TestSelectionMissingChildIsReported(t *testing.T) {
 		t.Fatal("missing child must be visible")
 	}
 }
+
+func TestHandoffInvitesFixesUpstream(t *testing.T) {
+	r, err := render(&Bundle{Sessions: []Session{{ID: "s"}}}, Options{}, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	md := string(r.md)
+	if !strings.Contains(md, "https://github.com/unxed/agendrain") || !strings.Contains(md, "pull request") || !strings.Contains(md, "agents") {
+		t.Fatalf("handoff lacks the agendrain link and PR invitation:\n%s", md)
+	}
+}
