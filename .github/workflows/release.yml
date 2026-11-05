@@ -62,4 +62,25 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" packages/* --verify-tag --title "agendrain $RELEASE_TAG" --generate-notes
+        shell: bash
+        # GitHub's upload endpoint sometimes stores an asset and still reports
+        # an error; a retried one-shot create then fails on the duplicate name.
+        # Uploading with --clobber into a draft keeps every step repeatable.
+        run: |
+          set -euo pipefail
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --draft --verify-tag --title "agendrain $RELEASE_TAG" --generate-notes
+          fi
+          for asset in packages/*; do
+            for attempt in 1 2 3 4 5; do
+              if gh release upload "$RELEASE_TAG" "$asset" --clobber; then
+                break
+              fi
+              [ "$attempt" -lt 5 ] || exit 1
+              sleep $((attempt * 10))
+            done
+          done
+          expected=$(ls packages | sort)
+          actual=$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' | sort)
+          [ "$expected" = "$actual" ] || { echo "release assets differ from packages"; exit 1; }
+          gh release edit "$RELEASE_TAG" --draft=false
